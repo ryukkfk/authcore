@@ -1,5 +1,5 @@
 {
-  "name": "@authcore/config",
+  "name": "@authcore/contracts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,5 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
-  },
-  "dependencies": {
-    "zod": "^4.6.5"
   }
 }
