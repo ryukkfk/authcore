@@ -15,6 +15,10 @@ export class DatabaseService implements OnApplicationShutdown {
     });
   }
 
+  getClient(): DatabaseClient {
+    return this.client;
+  }
+
   async checkConnection(): Promise<void> {
     await checkDatabaseConnection(this.client);
   }
