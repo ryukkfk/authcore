@@ -16,6 +16,24 @@ jobs:
     name: Verify
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: authcore_test
+          POSTGRES_PASSWORD: authcore_test
+          POSTGRES_DB: authcore_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U authcore_test -d authcore_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql://authcore_test:authcore_test@localhost:5432/authcore_test
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,11 +56,15 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # Workspace packages expose dist entrypoints needed by downstream checks.
+      - name: Build
+        run: pnpm build
+
       - name: Type check
         run: pnpm typecheck
 
       - name: Test
         run: pnpm test
 
-      - name: Build
-        run: pnpm build
+      - name: PostgreSQL integration tests
+        run: pnpm --filter @authcore/db test:integration
