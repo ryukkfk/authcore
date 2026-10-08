@@ -128,6 +128,8 @@ Correctness and security take priority over implementation speed.
 
 ## Related Documents
 
+- [[Development Status]] — current milestone, latest verification, and next steps
+- [[Identity Foundation]] — repository and transactional signup behavior
 - [[Architecture]]
 - [[Security Requirements]]
 - [[Threat Model]]

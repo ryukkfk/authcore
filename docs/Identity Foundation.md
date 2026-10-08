@@ -1,7 +1,13 @@
 # Identity foundation repository
 
+Last updated: 2026-10-08 (Asia/Rangoon)
+
+Status: transactional signup foundation implemented and locally verified on
+`feat/signup-foundation`; implementation changes await review and commit.
+See [[Development Status]] for the verification checkpoint and remaining work.
+
 `@authcore/db` exports `UserRepository`, `DuplicateUserEmailError`, `CreateUserInput`,
-and `UserRepositoryDatabase`. No new dependency or schema migration is required.
+and `UserRepositoryDatabase` alongside `PasswordCredentialRepository` and its input/database types.
 The existing `users_email_normalized_unique` index enforces uniqueness.
 
 - `new UserRepository(client.db)` uses the existing database client and pool.
@@ -27,17 +33,42 @@ commit/rollback. The repository uses targeted `ON CONFLICT DO NOTHING RETURNING`
 instead of a pre-insert lookup, so a handled duplicate does not abort the
 transaction. Pool shutdown remains the database client's responsibility.
 
+## Transactional signup foundation
+
+`IdentityModule` exports `SignupService.signup({ email, password })`. This internal
+application operation expects validated input from its future API boundary; it does
+not introduce an HTTP signup endpoint or change `IdentityService.createUser`.
+
+The service trims/normalizes email and uses `@authcore/crypto.hashPassword` before
+opening a transaction. It constructs both repositories with the same transaction,
+inserts the user and its credential, and returns only the user after commit. Any
+credential insert failure rolls back the user. `DuplicateUserEmailError` maps to
+the existing `EmailAlreadyInUseError`; unrelated failures propagate.
+
+`PasswordCredentialRepository.create({ userId, passwordHash })` persists only those
+fields and returns database defaults. `findByUserId` returns a credential or null.
+The repository accepts an encoded hash, never a plaintext-password field. It neither
+opens transactions nor closes pools. The existing primary key and foreign key enforce
+one credential per user and cascading deletion. No additional migration is required.
+
+Passwords retain their exact whitespace when hashed. Neither input nor errors are
+logged by signup. After commit, a structured `identity.user_created` log event contains
+only the user ID. This is an audit signal, not a durable transactional audit store.
+
 ## PostgreSQL integration tests
 
 Set `TEST_DATABASE_URL` to a local/test PostgreSQL database, then run:
 
 ```powershell
 pnpm --filter @authcore/db test:integration
+pnpm --filter @authcore/api test
 ```
 
-The suite creates a randomly named `identity_test_*` schema, applies the checked-in
-Drizzle migrations there, and drops only that schema after testing. The database
-role needs schema creation permission. Existing application tables are not used.
+The suites create randomly named `identity_test_*` and `signup_test_*` databases,
+apply the checked-in migrations there, and drop only those databases after testing.
+The database role needs `CREATEDB` permission. Whole-database isolation is necessary
+because the credential migration explicitly references `public.users`.
+Existing application tables are not used.
 If `TEST_DATABASE_URL` is absent, the suite is explicitly skipped; it never falls
 back to `DATABASE_URL`. CI supplies a PostgreSQL 17 service and this variable, so
 the repository suite runs there. A configured but unreachable database fails the
@@ -47,6 +78,26 @@ Coverage includes persisted defaults, exact lookups, SQL-looking input, duplicat
 conflicts and concurrency, unrelated database errors and unique constraints,
 privileged-field protection, transaction rollback, and continued use of a
 transaction after handling a duplicate. Production database builds exclude tests.
+Credential coverage adds persisted defaults, ignored extra fields, uniqueness,
+foreign keys, cascade deletion, and caller-controlled rollback. Signup coverage adds
+real Argon2id verification, concurrent duplicate signup, PostgreSQL credential failure
+with user rollback, hashing/commit failure, and password-free audit events.
+Focused unit tests also cover missing insert results, credential read/write failures,
+secret-bearing dependency errors, and Nest dependency injection without emitted
+constructor type metadata (the development runner's behavior).
 
 CI builds workspace packages before typechecking and testing because dependent
 packages resolve their public entrypoints from `dist`.
+
+## Next step — signup HTTP boundary
+
+Add validated signup request/response DTOs and a controller that calls `SignupService`.
+Enforce password input limits before hashing, define the public duplicate-email/error
+contract, registration policy, authentication requirement, and rate-limit category,
+then add HTTP success and failure coverage. Define verification-event behavior as part
+of [[Roadmap#AUTH-001 — Registration]] before marking the full registration flow complete.
+
+The latest local checkpoint passed 42 workspace tests plus 14 separate database
+integration tests, for 56 distinct tests. Build, typecheck, lint, targeted formatting,
+and diff checks passed. These are the recorded implementation-run results;
+the documentation update did not rerun application tests.

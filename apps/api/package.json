@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "pnpm --filter @authcore/config build && pnpm --filter @authcore/db build",
+    "predev": "pnpm --filter @authcore/config build && pnpm --filter @authcore/db build && pnpm --filter @authcore/crypto build",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "build": "tsc -p tsconfig.build.json",
@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@authcore/config": "workspace:*",
+    "@authcore/crypto": "workspace:*",
     "@authcore/db": "workspace:*",
     "@nestjs/common": "^12.1.2",
     "@nestjs/core": "^12.1.2",

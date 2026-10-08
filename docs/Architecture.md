@@ -1,4 +1,3 @@
-````
 # AuthCore Architecture
 
 ## Overview
@@ -77,7 +76,7 @@ The goal is to keep the system operationally simple while preserving strong modu
        | Cleanup     |
        | Audit Jobs  |
        +-------------+
-````
+```
 
 ---
 

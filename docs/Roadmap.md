@@ -3,6 +3,12 @@
 Status: Active
 Version: 0.1
 
+Last updated: 2026-10-08 (Asia/Rangoon)
+
+Current implementation progress and verification evidence: [[Development Status]].
+The roadmap describes full ticket acceptance scope; implemented primitives do not
+by themselves complete an entire registration or security milestone.
+
 This roadmap defines the recommended implementation sequence for AuthCore.
 
 The project should progress in small, reviewable increments.
@@ -50,7 +56,7 @@ Create:
 
 Status:
 
-Planned
+Implemented locally — repository directories are present.
 
 ---
 
@@ -65,7 +71,7 @@ Add:
 
 Status:
 
-Planned
+Implemented locally — workspace build and typecheck passed at the 2026-10-08 checkpoint.
 
 ---
 
@@ -79,7 +85,8 @@ Add:
 
 Status:
 
-Planned
+Implemented with cleanup pending — workspace lint passed; whole-repository formatting
+reported 73 pre-existing files at the 2026-10-08 checkpoint.
 
 ---
 
@@ -93,7 +100,8 @@ Add:
 
 Status:
 
-Planned
+Implemented locally — unit and isolated PostgreSQL integration suites are available.
+See [[Development Status]] for the latest 56-test checkpoint.
 
 ---
 
@@ -109,7 +117,9 @@ Add:
 
 Status:
 
-Planned
+Configured — PostgreSQL and Redis services, health checks, and persistent volumes are
+defined in Docker Compose. PostgreSQL was used successfully for the latest integration
+tests; Redis runtime health was not checked in that checkpoint.
 
 ---
 
@@ -123,7 +133,8 @@ Add:
 
 Status:
 
-Planned
+Implemented locally — validated configuration and API development environment loading
+are present; environment configuration tests passed at the latest checkpoint.
 
 ---
 
@@ -139,7 +150,8 @@ CI must run:
 
 Status:
 
-Planned
+Configured — GitHub Actions defines install, lint, build, typecheck, unit tests, and
+PostgreSQL integration tests. Remote CI execution status is unverified here.
 
 ---
 
@@ -288,6 +300,17 @@ Avoid unsafe assumptions about mailbox equivalence.
 ### AUTH-001 — Registration
 
 Implement user registration.
+
+Status: In progress — transactional signup foundation implemented and locally
+verified on `feat/signup-foundation`; review and commit pending. See [[Identity Foundation]].
+
+Next: signup HTTP controller, validated input/output, password input limits,
+public error contract, registration policy, rate limits, and HTTP tests.
+Verification-event behavior is also required to complete the flow below.
+
+Naming note: the implementation conversation called signup foundation "API-004";
+the original API-004 in this roadmap remains Global Error Handling. Track signup
+foundation here under AUTH-001 without renumbering the original tickets.
 
 Flow:
 
@@ -857,8 +880,12 @@ Next ticket
 
 Current milestone:
 
-**Phase 0 — Foundation and Security Design**
+**Phase 2 — Identity and Password Credentials: transactional signup foundation locally verified**
 
 Current next ticket:
 
-**FOUNDATION-002 — Workspace Configuration**
+**AUTH-001 — Registration: signup HTTP boundary**
+
+Latest checkpoint: 2026-10-08, `feat/signup-foundation`, 56 distinct tests passed;
+workspace build, typecheck, and lint passed. Implementation changes remain uncommitted.
+See [[Development Status]] for exact counts, remaining work, and verification limits.
