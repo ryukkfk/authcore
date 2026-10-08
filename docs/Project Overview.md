@@ -128,6 +128,8 @@ Correctness and security take priority over implementation speed.
 
 ## Related Documents
 
+- [[Security Defaults]] — loopback development bindings and default-disabled registration
+
 - [[Development Status]] — current milestone, latest verification, and next steps
 - [[Identity Foundation]] — repository and transactional signup behavior
 - [[Architecture]]

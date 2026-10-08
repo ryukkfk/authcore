@@ -1,7 +1,8 @@
-import { Body, Controller, HttpCode, HttpStatus, Inject, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Inject, Post, UseGuards } from '@nestjs/common';
 
 import { SignupDto } from './dto/signup.dto.js';
 import { EmailAlreadyInUseError } from './identity.errors.js';
+import { SignupEnabledGuard } from './signup-enabled.guard.js';
 import { SignupService } from './signup.service.js';
 
 interface SignupResponse {
@@ -16,6 +17,7 @@ export class AuthController {
   ) {}
 
   @Post('signup')
+  @UseGuards(SignupEnabledGuard)
   @HttpCode(HttpStatus.ACCEPTED)
   async signup(@Body() input: SignupDto): Promise<SignupResponse> {
     try {

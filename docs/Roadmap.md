@@ -101,8 +101,7 @@ Add:
 Status:
 
 Implemented locally — unit and isolated PostgreSQL integration suites are available.
-See [[Development Status]] for the latest API 33/33 and DB integration 14/14 checkpoint
-and the limits on the inferred workspace/distinct totals.
+See [[Development Status]] for current local checks and historical verification evidence.
 
 ---
 
@@ -302,15 +301,14 @@ Avoid unsafe assumptions about mailbox equivalence.
 
 Implement user registration.
 
-Status: In progress — transactional signup foundation and signup HTTP boundary implemented
-and locally verified on `feat/signup-foundation`. Foundation commit `45cf26a` is pushed;
-HTTP endpoint edits remain uncommitted. See [[Identity Foundation]].
+Status: In progress — transactional signup foundation and signup HTTP boundary are
+in Draft PR #4 at baseline `b1b8a9a`. Uncommitted development hardening adds loopback
+defaults, a validated default-false SIGNUP_ENABLED guard, query-safe error logging,
+and regression tests. See [[Identity Foundation]] and [[Security Defaults]].
 
-Implemented: public `POST /api/v1/auth/signup`, `SignupDto` email trim/validation,
-12–128-character passwords with exact whitespace retained, and `AuthController` registration
-in `IdentityModule`. Success and duplicate email return HTTP 202 `{"status":"accepted"}`;
-invalid inputs/unexpected fields return 400 and unexpected failures receive safe 500 handling.
-Coverage adds 3 controller unit tests and 7 HTTP integration tests.
+Implemented: signup rejects disabled requests with consistent 403 before DTO validation,
+hashing or writes. Explicit isolated-development enablement preserves email validation,
+12–128-character passwords, generic 202 success/duplicate responses and safe errors.
 
 Next: registration policy, verification-event creation/delivery, signup rate limiting and
 abuse controls, timing-resistant account-enumeration protection, and durable audit.
@@ -896,8 +894,7 @@ Current next work:
 **AUTH-001 — Registration (in progress): registration policy and verification events,
 with rate limiting, abuse controls, timing resistance, and durable audit still pending.**
 
-Latest user-verified checkpoint: 2026-10-08, `feat/signup-foundation`, API 33/33
-(including 4 signup PostgreSQL tests), separate DB integration 14/14, no skips;
-workspace build, typecheck, and lint successful. Foundation commit `45cf26a` is pushed;
-HTTP endpoint edits remain uncommitted. Production deployment is not ready.
-See [[Development Status]] for the inferred 52 workspace / 66 distinct totals and evidence limits.
+Latest hardening verification: see [[Development Status]] for final local checks.
+Baseline remote CI passed at `b1b8a9a`; the hardening changes are not committed or pushed.
+Public production registration remains blocked. See [[Security Defaults]] for manual
+listener/container checks and remaining public-enablement requirements.

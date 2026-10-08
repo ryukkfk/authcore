@@ -23,14 +23,14 @@ describe('parseEnvironment', () => {
 
   it('applies supported defaults', () => {
     const config = parseEnvironment({
-      DATABASE_URL:
-        'postgresql://authcore:authcore_dev@localhost:5432/authcore',
+      DATABASE_URL: 'postgresql://authcore:authcore_dev@localhost:5432/authcore',
       REDIS_URL: 'redis://localhost:6379',
       WEB_ORIGIN: 'http://localhost:3000',
     });
 
     expect(config.NODE_ENV).toBe('development');
-    expect(config.API_HOST).toBe('0.0.0.0');
+    expect(config.API_HOST).toBe('127.0.0.1');
+    expect(config.SIGNUP_ENABLED).toBe(false);
     expect(config.API_PORT).toBe(4000);
     expect(config.LOG_LEVEL).toBe('info');
   });
@@ -96,5 +96,32 @@ describe('parseEnvironment', () => {
         NODE_ENV: 'staging',
       }),
     ).toThrow('NODE_ENV');
+  });
+});
+describe('signup exposure configuration', () => {
+  it.each(['development', 'test', 'production'])('disables signup by default in %s', (NODE_ENV) => {
+    expect(parseEnvironment({ ...validEnvironment, NODE_ENV }).SIGNUP_ENABLED).toBe(false);
+  });
+
+  it.each([
+    ['true', true],
+    ['false', false],
+  ] as const)('parses explicit SIGNUP_ENABLED=%s', (value, expected) => {
+    expect(parseEnvironment({ ...validEnvironment, SIGNUP_ENABLED: value }).SIGNUP_ENABLED).toBe(
+      expected,
+    );
+  });
+
+  it.each(['', 'TRUE', 'False', '1', '0', 'yes', 'no', ' true ', 'invalid'])(
+    'rejects ambiguous SIGNUP_ENABLED=%j',
+    (value) => {
+      expect(() => parseEnvironment({ ...validEnvironment, SIGNUP_ENABLED: value })).toThrow(
+        'SIGNUP_ENABLED',
+      );
+    },
+  );
+
+  it('preserves an explicitly configured deployment host', () => {
+    expect(parseEnvironment({ ...validEnvironment, API_HOST: '0.0.0.0' }).API_HOST).toBe('0.0.0.0');
   });
 });

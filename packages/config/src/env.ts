@@ -7,9 +7,7 @@ const environmentSchema = z.object({
     .string()
     .min(1, 'DATABASE_URL is required')
     .refine(
-      (value) =>
-        value.startsWith('postgresql://') ||
-        value.startsWith('postgres://'),
+      (value) => value.startsWith('postgresql://') || value.startsWith('postgres://'),
       'DATABASE_URL must be a PostgreSQL URL',
     ),
 
@@ -17,26 +15,28 @@ const environmentSchema = z.object({
     .string()
     .min(1, 'REDIS_URL is required')
     .refine(
-      (value) =>
-        value.startsWith('redis://') ||
-        value.startsWith('rediss://'),
+      (value) => value.startsWith('redis://') || value.startsWith('rediss://'),
       'REDIS_URL must be a Redis URL',
     ),
 
-  API_HOST: z.string().min(1).default('0.0.0.0'),
+  API_HOST: z.string().min(1).default('127.0.0.1'),
 
-API_PORT: z
-  .string()
-  .regex(/^\d+$/, 'API_PORT must be a valid integer')
-  .transform(Number)
-  .pipe(z.number().int().min(1).max(65535))
-  .default(4000),
+  // Only explicit lowercase true enables signup; missing values fail closed.
+  SIGNUP_ENABLED: z
+    .enum(['true', 'false'], { message: 'SIGNUP_ENABLED must be true or false' })
+    .transform((value) => value === 'true')
+    .default(false),
+
+  API_PORT: z
+    .string()
+    .regex(/^\d+$/, 'API_PORT must be a valid integer')
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(65535))
+    .default(4000),
 
   WEB_ORIGIN: z.url(),
 
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
-    .default('info'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;
@@ -51,9 +51,7 @@ export function parseEnvironment(input: EnvironmentInput): Environment {
       (issue) => `${issue.path.join('.')}: ${issue.message}`,
     );
 
-    throw new Error(
-      `Invalid environment configuration:\n${messages.join('\n')}`,
-    );
+    throw new Error(`Invalid environment configuration:\n${messages.join('\n')}`);
   }
 
   return Object.freeze(result.data);

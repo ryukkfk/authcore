@@ -3,8 +3,9 @@
 Last updated: 2026-10-08 (Asia/Rangoon)
 
 Status: transactional signup foundation and signup HTTP boundary implemented and locally
-verified on `feat/signup-foundation`. Foundation commit `45cf26a` is committed and pushed;
-HTTP endpoint edits remain uncommitted. AUTH-001 — Registration remains in progress.
+verified on `feat/signup-foundation`; Draft PR #4 baseline is `b1b8a9a`.
+Development hardening remains uncommitted. AUTH-001 — Registration remains in progress.
+The HTTP endpoint is disabled by default; see [[Security Defaults]].
 See [[Development Status]] for the verification checkpoint and remaining work.
 
 `@authcore/db` exports `UserRepository`, `DuplicateUserEmailError`, `CreateUserInput`,
@@ -58,9 +59,10 @@ only the user ID. This is an audit signal, not a durable transactional audit sto
 
 ## Signup HTTP boundary
 
-`IdentityModule` registers `AuthController`, which calls `SignupService` for public
+`IdentityModule` registers `AuthController`, which calls `SignupService` for explicitly enabled
 `POST /api/v1/auth/signup` under the application's `api/v1` prefix. No authentication
-or authorization guard is applied to this endpoint; registration policy remains pending.
+or authorization requirement is applied to enabled registration; registration policy remains pending.
+A separate SignupEnabledGuard denies disabled registration before DTO validation/service execution.
 
 `SignupDto` trims string email input, requires a valid email string, and limits it to
 254 characters. Service-level email normalization remains trim and lowercase. Passwords
@@ -70,6 +72,7 @@ unexpected fields before invoking the service or hashing a password.
 
 | Outcome                                    | HTTP response                                                |
 | ------------------------------------------ | ------------------------------------------------------------ |
+| Disabled signup                            | 403 `HTTP_403` / `Signup is disabled`                        |
 | Successful signup                          | 202 `{"status":"accepted"}`                                  |
 | Duplicate email (`EmailAlreadyInUseError`) | Identical 202 `{"status":"accepted"}`                        |
 | Invalid inputs or unexpected fields        | 400 validation error                                         |
@@ -81,11 +84,12 @@ raw exceptions, database details, or passwords. Equal status/body for success an
 email does not establish timing-resistant account-enumeration protection.
 
 Three controller unit tests cover success, duplicate email, and unexpected-error propagation.
-Seven HTTP integration tests cover 202 success, identical duplicate responses, invalid email,
+The original seven HTTP integration tests cover 202 success, identical duplicate responses, invalid email,
 short password, unexpected fields, email trim with exact password whitespace, and safe 500
 handling. These use a real Nest HTTP server with a mocked `SignupService`; they are separate
-from the 4 PostgreSQL signup integration tests. The 7 HTTP cases do not explicitly test the
-128-character boundary or overlong passwords, although the DTO enforces the maximum.
+from the 4 PostgreSQL signup integration tests. The hardening regression cases additionally test 12/128-character acceptance,
+11/129-character rejection, non-string inputs, disabled-route hashing/write prevention
+and sensitive-query logging. The flag is explicitly enabled in the existing HTTP suite.
 
 ## PostgreSQL integration tests
 
@@ -129,9 +133,9 @@ abuse controls, timing-resistant account-enumeration protection, durable audit s
 and transactional outbox delivery remain pending. Production deployment is not ready.
 API-004 remains [[Roadmap#API-004 — Global Error Handling]]; signup work belongs to AUTH-001.
 
-The user's latest recorded results show workspace build, typecheck, and lint successful;
-API 33/33 (including 4 signup PostgreSQL tests) and separate DB integration 14/14 passed
-with no skips. Expected totals are 52 workspace / 66 distinct tests, inferred using the
-earlier config 9 and crypto 5 counts whose completion summaries are absent from the latest
-pasted workspace output. See [[Development Status]] for the breakdown and evidence limits.
-The documentation update did not rerun application tests.
+The historical pre-hardening checkpoint recorded API 33/33 and DB integration 14/14.
+The hardening working tree now passes build, typecheck, lint, 78 workspace tests
+(config 24, crypto 5, DB unit 5, API 44) and 14 separate DB integration tests: 92
+distinct tests, no skips. API 44 includes the 4 PostgreSQL signup tests. See
+[[Development Status]] for execution evidence and [[Security Defaults]] for remaining
+runtime checks. These local results do not update remote PR CI; no push was performed.
