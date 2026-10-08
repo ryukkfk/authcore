@@ -49,7 +49,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       return;
     }
 
-    this.logger.error(`Unhandled exception during ${request.method} ${request.url}`);
+    // URLs, query strings, bodies and raw exceptions may contain credentials.
+    this.logger.error({ event: 'http.unhandled_exception', method: request.method });
 
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       error: {

@@ -3,6 +3,12 @@
 Status: Active
 Version: 0.1
 
+Last updated: 2026-10-08 (Asia/Rangoon)
+
+Current implementation progress and verification evidence: [[Development Status]].
+The roadmap describes full ticket acceptance scope; implemented primitives do not
+by themselves complete an entire registration or security milestone.
+
 This roadmap defines the recommended implementation sequence for AuthCore.
 
 The project should progress in small, reviewable increments.
@@ -50,7 +56,7 @@ Create:
 
 Status:
 
-Planned
+Implemented locally — repository directories are present.
 
 ---
 
@@ -65,7 +71,7 @@ Add:
 
 Status:
 
-Planned
+Implemented locally — workspace build and typecheck passed at the 2026-10-08 checkpoint.
 
 ---
 
@@ -79,7 +85,8 @@ Add:
 
 Status:
 
-Planned
+Implemented with cleanup pending — workspace lint passed; whole-repository formatting
+reported 73 pre-existing files at the 2026-10-08 checkpoint.
 
 ---
 
@@ -93,7 +100,8 @@ Add:
 
 Status:
 
-Planned
+Implemented locally — unit and isolated PostgreSQL integration suites are available.
+See [[Development Status]] for current local checks and historical verification evidence.
 
 ---
 
@@ -109,7 +117,9 @@ Add:
 
 Status:
 
-Planned
+Configured — PostgreSQL and Redis services, health checks, and persistent volumes are
+defined in Docker Compose. PostgreSQL was used successfully for the latest integration
+tests; Redis runtime health was not checked in that checkpoint.
 
 ---
 
@@ -123,7 +133,8 @@ Add:
 
 Status:
 
-Planned
+Implemented locally — validated configuration and API development environment loading
+are present; environment configuration tests passed at the latest checkpoint.
 
 ---
 
@@ -139,7 +150,8 @@ CI must run:
 
 Status:
 
-Planned
+Configured — GitHub Actions defines install, lint, build, typecheck, unit tests, and
+PostgreSQL integration tests. Remote CI execution status is unverified here.
 
 ---
 
@@ -288,6 +300,24 @@ Avoid unsafe assumptions about mailbox equivalence.
 ### AUTH-001 — Registration
 
 Implement user registration.
+
+Status: In progress — transactional signup foundation and signup HTTP boundary are
+in Draft PR #4 at baseline `b1b8a9a`. Uncommitted development hardening adds loopback
+defaults, a validated default-false SIGNUP_ENABLED guard, query-safe error logging,
+and regression tests. See [[Identity Foundation]] and [[Security Defaults]].
+
+Implemented: signup rejects disabled requests with consistent 403 before DTO validation,
+hashing or writes. Explicit isolated-development enablement preserves email validation,
+12–128-character passwords, generic 202 success/duplicate responses and safe errors.
+
+Next: registration policy, verification-event creation/delivery, signup rate limiting and
+abuse controls, timing-resistant account-enumeration protection, and durable audit.
+Equal response status/body alone does not establish timing resistance. Registration is
+incomplete and production deployment is not ready.
+
+Naming note: the implementation conversation called signup foundation "API-004";
+the original API-004 in this roadmap remains Global Error Handling. Track signup
+foundation here under AUTH-001 without renumbering the original tickets.
 
 Flow:
 
@@ -857,8 +887,14 @@ Next ticket
 
 Current milestone:
 
-**Phase 0 — Foundation and Security Design**
+**Phase 2 — Identity and Password Credentials: signup HTTP boundary locally verified**
 
-Current next ticket:
+Current next work:
 
-**FOUNDATION-002 — Workspace Configuration**
+**AUTH-001 — Registration (in progress): registration policy and verification events,
+with rate limiting, abuse controls, timing resistance, and durable audit still pending.**
+
+Latest hardening verification: see [[Development Status]] for final local checks.
+Baseline remote CI passed at `b1b8a9a`; the hardening changes are not committed or pushed.
+Public production registration remains blocked. See [[Security Defaults]] for manual
+listener/container checks and remaining public-enablement requirements.

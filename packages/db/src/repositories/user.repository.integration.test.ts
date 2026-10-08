@@ -6,31 +6,34 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { users } from '../schema/index.js';
+import { passwordCredentials, users } from '../schema/index.js';
+import { PasswordCredentialRepository } from './password-credential.repository.js';
 import { DuplicateUserEmailError, UserRepository } from './user.repository.js';
 
 // Opt in explicitly: never fall back to an application's DATABASE_URL.
 const connectionString = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!connectionString)('UserRepository PostgreSQL integration', () => {
-  const schema = `identity_test_${randomUUID().replaceAll('-', '')}`;
+  const databaseName = `identity_test_${randomUUID().replaceAll('-', '')}`;
+  const testUrl = new URL(connectionString ?? 'postgresql://localhost/postgres');
+  testUrl.pathname = `/${databaseName}`;
   const admin = new Pool({ connectionString, connectionTimeoutMillis: 5_000 });
   const pool = new Pool({
-    connectionString,
+    connectionString: testUrl.toString(),
     connectionTimeoutMillis: 5_000,
-    options: `-c search_path=${schema}`,
   });
   const db = drizzle(pool);
   const repository = new UserRepository(db);
+  const credentials = new PasswordCredentialRepository(db);
   const input = { email: 'User@Example.COM', emailNormalized: 'user@example.com' };
-  let schemaCreated = false;
+  let databaseCreated = false;
 
   beforeAll(async () => {
-    await admin.query(`CREATE SCHEMA "${schema}"`);
-    schemaCreated = true;
+    // The migration explicitly references public.users, so isolate the entire DB.
+    await admin.query(`CREATE DATABASE "${databaseName}"`);
+    databaseCreated = true;
     await migrate(db, {
       migrationsFolder: fileURLToPath(new URL('../../drizzle', import.meta.url)),
-      migrationsSchema: schema,
     });
   }, 15_000);
 
@@ -43,7 +46,7 @@ describe.skipIf(!connectionString)('UserRepository PostgreSQL integration', () =
       await pool.end();
     } finally {
       try {
-        if (schemaCreated) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+        if (databaseCreated) await admin.query(`DROP DATABASE "${databaseName}"`);
       } finally {
         await admin.end();
       }
@@ -169,5 +172,54 @@ describe.skipIf(!connectionString)('UserRepository PostgreSQL integration', () =
     });
 
     expect(await repository.findByNormalizedEmail(other.emailNormalized)).toMatchObject(other);
+  });
+
+  it('persists only credential fields, returns defaults, and looks up by user ID', async () => {
+    const user = await repository.create(input);
+    const credential = await credentials.create({
+      userId: user.id,
+      passwordHash: 'encoded-hash',
+      ...{ password: 'must-never-be-persisted', createdAt: new Date(0), updatedAt: new Date(0) },
+    });
+    expect(credential).toMatchObject({ userId: user.id, passwordHash: 'encoded-hash' });
+    expect(credential.createdAt.getTime()).toBeGreaterThan(0);
+    expect(credential.updatedAt.getTime()).toBeGreaterThan(0);
+    expect(credential).not.toHaveProperty('password');
+    expect(await credentials.findByUserId(user.id)).toEqual(credential);
+    expect(await credentials.findByUserId(randomUUID())).toBeNull();
+  });
+
+  it('rejects duplicate credentials without replacing the existing hash', async () => {
+    const user = await repository.create(input);
+    const original = await credentials.create({ userId: user.id, passwordHash: 'original-hash' });
+    await expect(
+      credentials.create({ userId: user.id, passwordHash: 'replacement-hash' }),
+    ).rejects.toMatchObject({ cause: { code: '23505' } });
+    expect(await credentials.findByUserId(user.id)).toEqual(original);
+  });
+
+  it('enforces the user foreign key and cascades user deletion', async () => {
+    await expect(
+      credentials.create({ userId: randomUUID(), passwordHash: 'encoded-hash' }),
+    ).rejects.toMatchObject({ cause: { code: '23503' } });
+    const user = await repository.create(input);
+    await credentials.create({ userId: user.id, passwordHash: 'encoded-hash' });
+    await db.delete(users);
+    expect(await credentials.findByUserId(user.id)).toBeNull();
+  });
+
+  it('rolls back both repositories when their caller aborts a shared transaction', async () => {
+    const failure = new Error('caller aborted');
+    await expect(
+      db.transaction(async (tx) => {
+        const user = await new UserRepository(tx).create(input);
+        const transactionalCredentials = new PasswordCredentialRepository(tx);
+        await transactionalCredentials.create({ userId: user.id, passwordHash: 'encoded-hash' });
+        expect(await transactionalCredentials.findByUserId(user.id)).not.toBeNull();
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(await db.select().from(users)).toHaveLength(0);
+    expect(await db.select().from(passwordCredentials)).toHaveLength(0);
   });
 });

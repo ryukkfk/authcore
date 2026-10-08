@@ -1,4 +1,3 @@
-````
 # AuthCore Architecture
 
 ## Overview
@@ -77,7 +76,7 @@ The goal is to keep the system operationally simple while preserving strong modu
        | Cleanup     |
        | Audit Jobs  |
        +-------------+
-````
+```
 
 ---
 
@@ -477,6 +476,10 @@ Sensitive credentials must never be logged.
 ---
 
 ## Deployment Strategy
+
+Current development defaults use loopback API/Compose bindings and a default-disabled
+signup HTTP guard. See [[Security Defaults]]. The diagram and production topology
+below describe the target architecture, not a verified active deployment.
 
 Initial production deployment:
 
