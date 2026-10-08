@@ -101,7 +101,8 @@ Add:
 Status:
 
 Implemented locally — unit and isolated PostgreSQL integration suites are available.
-See [[Development Status]] for the latest 56-test checkpoint.
+See [[Development Status]] for the latest API 33/33 and DB integration 14/14 checkpoint
+and the limits on the inferred workspace/distinct totals.
 
 ---
 
@@ -301,12 +302,20 @@ Avoid unsafe assumptions about mailbox equivalence.
 
 Implement user registration.
 
-Status: In progress — transactional signup foundation implemented and locally
-verified on `feat/signup-foundation`; review and commit pending. See [[Identity Foundation]].
+Status: In progress — transactional signup foundation and signup HTTP boundary implemented
+and locally verified on `feat/signup-foundation`. Foundation commit `45cf26a` is pushed;
+HTTP endpoint edits remain uncommitted. See [[Identity Foundation]].
 
-Next: signup HTTP controller, validated input/output, password input limits,
-public error contract, registration policy, rate limits, and HTTP tests.
-Verification-event behavior is also required to complete the flow below.
+Implemented: public `POST /api/v1/auth/signup`, `SignupDto` email trim/validation,
+12–128-character passwords with exact whitespace retained, and `AuthController` registration
+in `IdentityModule`. Success and duplicate email return HTTP 202 `{"status":"accepted"}`;
+invalid inputs/unexpected fields return 400 and unexpected failures receive safe 500 handling.
+Coverage adds 3 controller unit tests and 7 HTTP integration tests.
+
+Next: registration policy, verification-event creation/delivery, signup rate limiting and
+abuse controls, timing-resistant account-enumeration protection, and durable audit.
+Equal response status/body alone does not establish timing resistance. Registration is
+incomplete and production deployment is not ready.
 
 Naming note: the implementation conversation called signup foundation "API-004";
 the original API-004 in this roadmap remains Global Error Handling. Track signup
@@ -880,12 +889,15 @@ Next ticket
 
 Current milestone:
 
-**Phase 2 — Identity and Password Credentials: transactional signup foundation locally verified**
+**Phase 2 — Identity and Password Credentials: signup HTTP boundary locally verified**
 
-Current next ticket:
+Current next work:
 
-**AUTH-001 — Registration: signup HTTP boundary**
+**AUTH-001 — Registration (in progress): registration policy and verification events,
+with rate limiting, abuse controls, timing resistance, and durable audit still pending.**
 
-Latest checkpoint: 2026-10-08, `feat/signup-foundation`, 56 distinct tests passed;
-workspace build, typecheck, and lint passed. Implementation changes remain uncommitted.
-See [[Development Status]] for exact counts, remaining work, and verification limits.
+Latest user-verified checkpoint: 2026-10-08, `feat/signup-foundation`, API 33/33
+(including 4 signup PostgreSQL tests), separate DB integration 14/14, no skips;
+workspace build, typecheck, and lint successful. Foundation commit `45cf26a` is pushed;
+HTTP endpoint edits remain uncommitted. Production deployment is not ready.
+See [[Development Status]] for the inferred 52 workspace / 66 distinct totals and evidence limits.

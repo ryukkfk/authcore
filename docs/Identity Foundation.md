@@ -2,8 +2,9 @@
 
 Last updated: 2026-10-08 (Asia/Rangoon)
 
-Status: transactional signup foundation implemented and locally verified on
-`feat/signup-foundation`; implementation changes await review and commit.
+Status: transactional signup foundation and signup HTTP boundary implemented and locally
+verified on `feat/signup-foundation`. Foundation commit `45cf26a` is committed and pushed;
+HTTP endpoint edits remain uncommitted. AUTH-001 — Registration remains in progress.
 See [[Development Status]] for the verification checkpoint and remaining work.
 
 `@authcore/db` exports `UserRepository`, `DuplicateUserEmailError`, `CreateUserInput`,
@@ -24,8 +25,8 @@ The existing `users_email_normalized_unique` index enforces uniqueness.
 
 The API identity layer owns validation and `normalizeEmail` (trim and lowercase).
 The repository trusts that boundary and never normalizes either input. Dots and
-plus tags remain significant. No signup endpoint or HTTP duplicate-email response
-is introduced by this persistence foundation.
+plus tags remain significant. The HTTP contract is implemented by `AuthController`,
+separately from persistence, as described below.
 
 For an atomic application operation, use `client.db.transaction(async (tx) => …)`
 and construct `new UserRepository(tx)` inside the callback. The caller controls
@@ -36,8 +37,8 @@ transaction. Pool shutdown remains the database client's responsibility.
 ## Transactional signup foundation
 
 `IdentityModule` exports `SignupService.signup({ email, password })`. This internal
-application operation expects validated input from its future API boundary; it does
-not introduce an HTTP signup endpoint or change `IdentityService.createUser`.
+application operation receives validated input from the signup HTTP boundary;
+`IdentityService.createUser` remains unchanged.
 
 The service trims/normalizes email and uses `@authcore/crypto.hashPassword` before
 opening a transaction. It constructs both repositories with the same transaction,
@@ -54,6 +55,37 @@ one credential per user and cascading deletion. No additional migration is requi
 Passwords retain their exact whitespace when hashed. Neither input nor errors are
 logged by signup. After commit, a structured `identity.user_created` log event contains
 only the user ID. This is an audit signal, not a durable transactional audit store.
+
+## Signup HTTP boundary
+
+`IdentityModule` registers `AuthController`, which calls `SignupService` for public
+`POST /api/v1/auth/signup` under the application's `api/v1` prefix. No authentication
+or authorization guard is applied to this endpoint; registration policy remains pending.
+
+`SignupDto` trims string email input, requires a valid email string, and limits it to
+254 characters. Service-level email normalization remains trim and lowercase. Passwords
+must be strings of 12–128 characters; whitespace is retained exactly, with no trimming.
+The global validation pipe transforms DTOs without implicit type conversion and rejects
+unexpected fields before invoking the service or hashing a password.
+
+| Outcome                                    | HTTP response                                                |
+| ------------------------------------------ | ------------------------------------------------------------ |
+| Successful signup                          | 202 `{"status":"accepted"}`                                  |
+| Duplicate email (`EmailAlreadyInUseError`) | Identical 202 `{"status":"accepted"}`                        |
+| Invalid inputs or unexpected fields        | 400 validation error                                         |
+| Unexpected failure                         | 500 with `INTERNAL_SERVER_ERROR` and `Internal server error` |
+
+The controller returns only the generic status, never user or credential data. Unexpected
+failures propagate to `GlobalExceptionFilter`, which returns a sanitized response without
+raw exceptions, database details, or passwords. Equal status/body for success and duplicate
+email does not establish timing-resistant account-enumeration protection.
+
+Three controller unit tests cover success, duplicate email, and unexpected-error propagation.
+Seven HTTP integration tests cover 202 success, identical duplicate responses, invalid email,
+short password, unexpected fields, email trim with exact password whitespace, and safe 500
+handling. These use a real Nest HTTP server with a mocked `SignupService`; they are separate
+from the 4 PostgreSQL signup integration tests. The 7 HTTP cases do not explicitly test the
+128-character boundary or overlong passwords, although the DTO enforces the maximum.
 
 ## PostgreSQL integration tests
 
@@ -89,15 +121,17 @@ constructor type metadata (the development runner's behavior).
 CI builds workspace packages before typechecking and testing because dependent
 packages resolve their public entrypoints from `dist`.
 
-## Next step — signup HTTP boundary
+## Next work — registration policy and verification events
 
-Add validated signup request/response DTOs and a controller that calls `SignupService`.
-Enforce password input limits before hashing, define the public duplicate-email/error
-contract, registration policy, authentication requirement, and rate-limit category,
-then add HTTP success and failure coverage. Define verification-event behavior as part
-of [[Roadmap#AUTH-001 — Registration]] before marking the full registration flow complete.
+[[Roadmap#AUTH-001 — Registration]] remains in progress. Define and implement registration
+policy and verification-event creation/delivery. Signup rate limiting and its category,
+abuse controls, timing-resistant account-enumeration protection, durable audit storage,
+and transactional outbox delivery remain pending. Production deployment is not ready.
+API-004 remains [[Roadmap#API-004 — Global Error Handling]]; signup work belongs to AUTH-001.
 
-The latest local checkpoint passed 42 workspace tests plus 14 separate database
-integration tests, for 56 distinct tests. Build, typecheck, lint, targeted formatting,
-and diff checks passed. These are the recorded implementation-run results;
-the documentation update did not rerun application tests.
+The user's latest recorded results show workspace build, typecheck, and lint successful;
+API 33/33 (including 4 signup PostgreSQL tests) and separate DB integration 14/14 passed
+with no skips. Expected totals are 52 workspace / 66 distinct tests, inferred using the
+earlier config 9 and crypto 5 counts whose completion summaries are absent from the latest
+pasted workspace output. See [[Development Status]] for the breakdown and evidence limits.
+The documentation update did not rerun application tests.
