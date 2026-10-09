@@ -11,6 +11,7 @@ import {
 import { DatabaseService } from '../database/database.service.js';
 import { normalizeEmail } from './email.js';
 import { EmailAlreadyInUseError } from './identity.errors.js';
+import { assertSignupLease } from './signup-admission.js';
 
 export interface SignupInput {
   email: string;
@@ -25,19 +26,24 @@ export class SignupService {
 
   /** Internal application operation. The API boundary must validate signup input. */
   async signup(input: SignupInput): Promise<User> {
+    assertSignupLease();
     const email = input.email.trim();
     const emailNormalized = normalizeEmail(email);
     // Do expensive hashing before borrowing a connection or taking database locks.
     const passwordHash = await hashPassword(input.password);
+    assertSignupLease();
 
     let user: User;
     try {
       user = await this.database.getClient().db.transaction(async (tx) => {
+        assertSignupLease();
         // This service owns the transaction; both repositories borrow exactly tx.
         const users = new UserRepository(tx);
         const credentials = new PasswordCredentialRepository(tx);
         const created = await users.create({ email, emailNormalized });
+        assertSignupLease();
         await credentials.create({ userId: created.id, passwordHash });
+        assertSignupLease();
         return created;
       });
     } catch (error: unknown) {
