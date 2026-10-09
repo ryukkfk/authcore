@@ -1,8 +1,9 @@
 # AuthCore Development Status
 
-Last updated: 2026-10-08 (Asia/Rangoon)
+Last updated: 2026-10-09 (Asia/Rangoon)
 
-Branch at the latest implementation checkpoint: `feat/signup-foundation`.
+Current branch: `feat/signup-abuse-controls`. Latest security follow-up evidence is
+recorded below; the foundation and hardening checkpoints remain historical.
 Draft PR #4 contains the signup foundation and HTTP endpoint at baseline `b1b8a9a`.
 Development security hardening is currently an uncommitted working-tree change; no push or merge was performed.
 See [[Security Defaults]] for the disabled signup policy and manual runtime checks.
@@ -11,8 +12,9 @@ See [[Security Defaults]] for the disabled signup policy and manual runtime chec
 
 **Phase 2 — Identity and Password Credentials: signup HTTP boundary disabled by default.**
 
-[[Roadmap#AUTH-001 — Registration]] remains in progress. Next work is registration policy,
-verification events, rate limiting and abuse controls, timing-resistant account-enumeration
+[[Roadmap#AUTH-001 — Registration]] remains in progress. Signup rate limiting and
+admission abuse controls are now implemented locally and disabled by default.
+Next work is registration policy, verification events, timing-resistant account-enumeration
 protection, and durable audit. Full registration is incomplete; production deployment is not ready.
 
 ## Implemented foundation
@@ -74,7 +76,8 @@ remains outside this documentation update.
 ## Remaining work and boundaries
 
 - Define and implement registration policy and verification-event creation/delivery.
-- Add signup rate limiting, its rate-limit category, and abuse controls before production use.
+- Signup rate limiting and admission are locally implemented and verified; public
+  enablement still requires capacity, lease/failover and operational validation.
 - Implement and test timing-resistant account-enumeration protection. Equal response status/body
   alone does not establish timing resistance.
 - The post-commit `identity.user_created` log is an audit signal. Durable audit storage and
@@ -136,7 +139,124 @@ and removed only their own random test databases. Database inventory before/afte
 matched. No container recreation, volume deletion, firewall change, commit, push
 or merge was performed.
 
-Resolved Compose configuration confirms loopback-only desired mappings, but docker ps
-still shows wildcard bindings on the existing containers. Applying those mappings
-requires separate approval. Existing environment overrides and actual API listeners
-also require private/manual verification; source defaults do not rewrite .env.
+At this historical 2026-10-08 checkpoint, resolved Compose configuration showed
+loopback-only desired mappings, while docker ps still showed wildcard bindings.
+Read-only verification on 2026-10-09 confirms the current PostgreSQL, development
+Redis and dedicated test Redis published ports bind only to `127.0.0.1` (5432,
+6379 and 6380 respectively). No containers were changed during this verification.
+Existing environment overrides and actual API listeners still require private/manual
+verification; source defaults do not rewrite .env.
+
+## Signup abuse-control security follow-up — 2026-10-09
+
+Branch: `feat/signup-abuse-controls`. Both outstanding findings are addressed
+locally: P1 Redis handshake/post-send reply deadlines now tear down the affected
+connection and reject pending operations; P2 CI has an isolated Redis 7 service
+bound to `127.0.0.1:6380`, health checks, explicit `TEST_REDIS_URL`, and the opted-in
+Redis integration step. Existing PostgreSQL and workspace steps remain intact.
+No fallback to development Redis and no database flush commands were introduced.
+
+The installed Redis/client version inspected is 5.12.1. Its queue timeout is
+removed at send, and transport `connectTimeout` does not cover handshake replies.
+The fix uses a bounded command facade and fresh client generations, a three-second
+TCP/TLS timeout plus separate three-second handshake deadline, one-second command
+reply deadlines, queue cap 128 and one-second demand-driven connection cooldown.
+No ambiguous consume/acquire is automatically retried. Ownership-safe release,
+local admission capacity and fail-closed HTTP behavior are preserved.
+
+### Final local verification
+
+All commands exited 0 against the final code. PowerShell used `pnpm.cmd` because
+script execution policy blocks the `.ps1` shim; no policy was changed.
+
+| Command                                       | Result                                                       |
+| --------------------------------------------- | ------------------------------------------------------------ |
+| `pnpm typecheck`                              | Passed across all nine workspace apps/packages               |
+| `pnpm lint`                                   | Passed across all nine workspace apps/packages               |
+| `pnpm build`                                  | Passed across all nine workspace apps/packages               |
+| `pnpm test`                                   | 124 passed: config 24, crypto 5, DB unit 5, API 90; no skips |
+| `pnpm --filter @authcore/db test:integration` | 14 PostgreSQL tests passed; no skips                         |
+| `pnpm --filter @authcore/api test:redis`      | 28 isolated real Redis tests passed; no skips                |
+| `git diff --check`                            | Passed                                                       |
+
+**166 distinct tests passed.** API's four PostgreSQL signup tests are included in
+its 90 and are not counted again. Packages with no test files are not counted.
+Three deterministic real-TCP/client deadline tests cover handshake stalls, sent
+command stalls, peer-side teardown, pending rejection, no replay, cooldown,
+recovery, stale deadlines and shutdown. The original outage-pressure unit test
+remains. The two new real Redis reply-stall cases additionally prove that the Lua
+consume reached Redis before its reply was lost and is never replayed on recovery.
+The regression tests failed for the original handshake/post-send defects before
+the fix and passed afterward.
+
+Tests used the existing loopback-only Redis 7 test container on port 6380. Database
+credentials were obtained privately from the existing PostgreSQL container and
+were not printed; tests created and removed their own UUID databases. No actual
+`.env`, containers, firewall, security policy or Git remote was modified.
+`SIGNUP_ENABLED=false` remains the default and Redis test configuration. No commit,
+push, PR creation, merge or deployment occurred.
+
+### Files changed in this follow-up
+
+- `.github/workflows/ci.yml`
+- `apps/api/src/redis/redis.service.ts`
+- `apps/api/src/redis/redis.service.test.ts`
+- `apps/api/src/redis/redis-deadlines.test.ts` (new)
+- `apps/api/src/redis/signup-rate-limiter.redis.integration.test.ts`
+- `apps/api/REDIS_INTEGRATION_TESTS.md`
+- `apps/api/SIGNUP_ADMISSION.md`
+- `docs/Development Status.md` (this Obsidian vault note)
+
+### Complete working-tree file inventory
+
+The following 26 files include the preserved pre-existing signup abuse-control
+implementation; files absent from the list above were not edited in this follow-up.
+Untracked files remain untracked and must be included when a future commit is authorized.
+
+```text
+.github/workflows/ci.yml
+apps/api/package.json
+apps/api/REDIS_INTEGRATION_TESTS.md
+apps/api/SIGNUP_ADMISSION.md
+apps/api/src/identity/auth.controller.integration.test.ts
+apps/api/src/identity/auth.controller.ts
+apps/api/src/identity/identity.module.ts
+apps/api/src/identity/signup-admission.interceptor.ts
+apps/api/src/identity/signup-admission.test.ts
+apps/api/src/identity/signup-admission.ts
+apps/api/src/identity/signup-rate-limit.guard.test.ts
+apps/api/src/identity/signup-rate-limit.guard.ts
+apps/api/src/identity/signup-rate-limiter.test.ts
+apps/api/src/identity/signup-rate-limiter.ts
+apps/api/src/identity/signup.service.test.ts
+apps/api/src/identity/signup.service.ts
+apps/api/src/redis/redis-deadlines.test.ts
+apps/api/src/redis/redis.module.ts
+apps/api/src/redis/redis.service.test.ts
+apps/api/src/redis/redis.service.ts
+apps/api/src/redis/signup-admission.redis.integration.test.ts
+apps/api/src/redis/signup-rate-limiter.redis.integration.test.ts
+apps/api/vitest.config.ts
+apps/api/vitest.redis-integration.config.ts
+docs/Development Status.md
+pnpm-lock.yaml
+```
+
+### Readiness and remaining risks
+
+Ready locally for Draft PR #5 review. Merge readiness still requires a fresh
+GitHub CI run and reviewer approval against the submitted revision; the workflow
+has not been executed remotely. No production enablement is authorized.
+
+Redis timeouts cannot undo an already-applied write. Ambiguous consumes can charge
+an attempt; ambiguous acquires can occupy a slot until ownership-safe cleanup or
+TTL. Fail-closed behavior deliberately trades availability for bounded abuse-control
+failure. Renewable leases still do not fence in-flight Argon2/PostgreSQL work
+through process pauses, partitions, eviction, restart or write-losing failover.
+Capacity/GC-margin validation, Redis durability/no-eviction policy, bounded DB
+transactions/statements, timing-resistant enumeration protection and durable audit
+remain before public signup enablement. These are existing limitations, not claims
+of a new hard global execution bound.
+
+Technical details: [signup admission](../apps/api/SIGNUP_ADMISSION.md) and
+[isolated Redis testing](../apps/api/REDIS_INTEGRATION_TESTS.md).

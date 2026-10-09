@@ -31,8 +31,19 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 127.0.0.1:6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     env:
       TEST_DATABASE_URL: postgresql://authcore_test:authcore_test@localhost:5432/authcore_test
+      TEST_REDIS_URL: redis://127.0.0.1:6380
 
     steps:
       - name: Checkout repository
@@ -68,3 +79,6 @@ jobs:
 
       - name: PostgreSQL integration tests
         run: pnpm --filter @authcore/db test:integration
+
+      - name: Redis integration tests
+        run: pnpm --filter @authcore/api test:redis

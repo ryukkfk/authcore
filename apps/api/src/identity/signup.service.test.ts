@@ -14,6 +14,8 @@ import {
 import { DatabaseService } from '../database/database.service.js';
 import { EmailAlreadyInUseError } from './identity.errors.js';
 import { SignupService } from './signup.service.js';
+import { SignupAdmission, SignupAdmissionUnavailable } from './signup-admission.js';
+import { RedisService } from '../redis/redis.service.js';
 
 vi.mock('@authcore/crypto', () => ({ hashPassword: vi.fn() }));
 
@@ -53,9 +55,47 @@ function setup() {
   };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe('SignupService', () => {
+  it.each(['hash', 'user insert'])(
+    'stops subsequent database work after lease loss during %s',
+    async (stage) => {
+      vi.useFakeTimers();
+      const { service, transaction, createUser, createCredential, user, audit } = setup();
+      const evalCommand = vi.fn().mockResolvedValueOnce(1).mockResolvedValue(0);
+      const admission = new SignupAdmission({
+        getClient: async () => ({ withCommandOptions: () => ({ eval: evalCommand }) }),
+      } as unknown as RedisService);
+      let finish!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      if (stage === 'hash')
+        vi.mocked(hashPassword).mockImplementation(async () => {
+          await gate;
+          return 'encoded-hash';
+        });
+      else
+        createUser.mockImplementation(async () => {
+          await gate;
+          return user;
+        });
+      const result = admission.run(() =>
+        service.signup({ email: 'user@example.com', password: 'secret' }),
+      );
+      const rejected = expect(result).rejects.toBeInstanceOf(SignupAdmissionUnavailable);
+      await vi.advanceTimersByTimeAsync(10_001);
+      finish();
+      await rejected;
+      if (stage === 'hash') expect(transaction).not.toHaveBeenCalled();
+      expect(createCredential).not.toHaveBeenCalled();
+      expect(audit).not.toHaveBeenCalled();
+    },
+  );
   it('hashes before opening the transaction and passes only allowed fields to persistence', async () => {
     const { service, transaction, user, createUser, createCredential, audit } = setup();
     vi.mocked(hashPassword).mockImplementation(async () => {
