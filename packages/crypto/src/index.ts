@@ -1,4 +1,5 @@
+export { hashPassword, verifyPassword } from './password.js';
 export {
-  hashPassword,
-  verifyPassword,
-} from './password.js';
+  createSignupIdempotencyHasher,
+  type SignupIdempotencyBinding,
+} from './signup-idempotency.js';

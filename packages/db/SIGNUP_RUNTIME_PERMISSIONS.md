@@ -13,15 +13,23 @@ not own database objects, hold administrative role attributes or belong to any
 other role, including a NOINHERIT membership that permits SET ROLE.
 
 The permission artifact replaces that login's direct privileges on the current
-database, public schema and three signup tables. It grants CONNECT, schema USAGE,
+database, public schema and five signup tables. It grants CONNECT, schema USAGE,
 table SELECT (needed by lookups and RETURNING), and table INSERT. Current
 repositories supply these fields and use database defaults for the others:
 
-| Table                 | Repository-supplied fields   |
-| --------------------- | ---------------------------- |
-| users                 | email, email_normalized      |
-| password_credentials  | user_id, password_hash       |
-| security_audit_events | event_type, user_id, payload |
+| Table                      | Repository-supplied fields                                                             |
+| -------------------------- | -------------------------------------------------------------------------------------- |
+| users                      | email, email_normalized                                                                |
+| password_credentials       | user_id, password_hash                                                                 |
+| security_audit_events      | event_type, user_id, payload                                                           |
+| signup_idempotency_claims  | key_version, hmac_key_version, key_digest, payload_version, payload_digest, expires_at |
+| signup_idempotency_results | claim_id, result_version, status_code, response_body                                   |
+
+The Phase A ledger additionally grants UPDATE only on the claim's inert
+`lock_anchor` column, whose CHECK fixes it to false. PostgreSQL needs this for row
+locking. Identity, binding and expiry stay immutable; result rows cannot be
+updated/deleted/truncated. See [Signup idempotency foundation](SIGNUP_IDEMPOTENCY.md)
+for canonicalization, transaction requirements, expiry/retention and rotation limits.
 
 The login cannot mutate or truncate existing audit rows, modify the schema,
 grant those permissions, or assume the owner role. The
@@ -41,7 +49,7 @@ schema/database CREATE or TEMPORARY privileges, access to other application
 relations/sequences (including writable owner-backed views), callable application
 SECURITY DEFINER routines, explicit routine/system-catalog grants, and grants for
 privileged server parameters. Direct
-column ACLs on the three tables are revoked as well as table ACLs. A failure rolls
+column ACLs on the five tables are revoked as well as table ACLs. A failure rolls
 back all provisioning changes; the artifact does not repair PUBLIC, memberships,
 role attributes or other objects automatically. Runtime permissions on other
 databases and the server's PUBLIC built-in/extension permission policy must be
@@ -53,7 +61,7 @@ to PostgreSQL catalog reads and built-in functions is not rewritten.
 After applying schema migrations, an authorized operator can invoke
 `permissions/provision-signup-runtime.psql` with an existing dedicated runtime
 login. The operator must have the rights to manage grants on the selected
-database, public schema and the three tables; the runtime principal must be
+database, public schema and the five tables; the runtime principal must be
 different. PostgreSQL 17+ is required by the existing signup transaction limits
 and the privilege checks.
 

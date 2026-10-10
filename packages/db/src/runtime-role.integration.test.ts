@@ -1,8 +1,21 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  SignupIdempotencyClaimRepository,
+  SignupIdempotencyConflictError,
+  SignupIdempotencyExpiryError,
+  SignupIdempotencyResultRepository,
+  type SignupClaimBinding,
+} from './repositories/signup-idempotency.repository.js';
+import { UserRepository } from './repositories/user.repository.js';
+import { PasswordCredentialRepository } from './repositories/password-credential.repository.js';
+import { SecurityAuditEventRepository } from './repositories/security-audit-event.repository.js';
+import { runSignupTransaction } from './signup-transaction.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (connectionString) {
@@ -38,7 +51,19 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     connectionString: runtimeUrl.toString(),
     connectionTimeoutMillis: 5_000,
   });
-  const tables = 'public.users, public.password_credentials, public.security_audit_events';
+  const tables =
+    'public.users, public.password_credentials, public.security_audit_events, public.signup_idempotency_claims, public.signup_idempotency_results';
+  const runtimeDb = drizzle(runtime);
+  const claims = new SignupIdempotencyClaimRepository(runtimeDb);
+  const results = new SignupIdempotencyResultRepository(runtimeDb);
+  const binding = (): SignupClaimBinding => ({
+    keyVersion: 1,
+    hmacKeyVersion: 1,
+    keyDigest: randomBytes(32).toString('hex'),
+    payloadVersion: 1,
+    payloadDigest: randomBytes(32).toString('hex'),
+  });
+  const expiry = () => new Date(Date.now() + 86_400_000);
   let databaseCreated = false;
   let roleCreated = false;
   let provisionSql: string;
@@ -88,6 +113,8 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
   }, 15_000);
 
   beforeEach(async () => {
+    await owner.query('DELETE FROM public.signup_idempotency_results');
+    await owner.query('DELETE FROM public.signup_idempotency_claims');
     await owner.query('DELETE FROM public.security_audit_events');
     await owner.query('DELETE FROM public.users');
     await owner.query(`GRANT ALL ON ${tables} TO "${roleName}"`);
@@ -367,5 +394,446 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     await expect(
       runtime.query('UPDATE public.security_audit_events SET occurred_at = now()'),
     ).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('reserves and looks up only allowed claim fields; retry preserves identity and expiry', async () => {
+    await provision();
+    const key = binding();
+    expect(await claims.findByKey(key)).toBeNull();
+    const first = await claims.reserve(
+      {
+        ...key,
+        ...{ id: randomUUID(), createdAt: new Date(0), lockAnchor: true, rawKey: 'do-not-store' },
+      },
+      expiry(),
+    );
+    expect(first.reserved).toBe(true);
+    expect(first.claim).toMatchObject({ ...key, lockAnchor: false });
+    expect(first.claim.createdAt.getTime()).toBeGreaterThan(0);
+    const retry = await claims.reserve(key, new Date(Date.now() + 172_800_000));
+    expect(retry).toEqual({ claim: first.claim, reserved: false });
+    expect(await claims.findByKey(key)).toEqual(first.claim);
+    expect(await results.findByClaimId(first.claim.id)).toBeNull();
+  });
+
+  it('concurrent identical claims establish exactly one durable identity', async () => {
+    await provision();
+    const key = binding();
+    const attempts = await Promise.all(
+      Array.from({ length: 8 }, () => claims.reserve(key, expiry())),
+    );
+    expect(attempts.filter((attempt) => attempt.reserved)).toHaveLength(1);
+    expect(new Set(attempts.map((attempt) => attempt.claim.id)).size).toBe(1);
+    expect((await owner.query('SELECT * FROM public.signup_idempotency_claims')).rows).toHaveLength(
+      1,
+    );
+  });
+
+  it('concurrent conflicting payloads cannot both reserve or change the winning binding', async () => {
+    await provision();
+    const first = binding();
+    const second = { ...first, payloadDigest: randomBytes(32).toString('hex') };
+    const attempts = await Promise.allSettled([
+      claims.reserve(first, expiry()),
+      claims.reserve(second, expiry()),
+    ]);
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    const failure = attempts.find((attempt) => attempt.status === 'rejected');
+    expect(failure?.reason).toBeInstanceOf(SignupIdempotencyConflictError);
+    expect(failure?.reason).not.toHaveProperty('cause');
+    expect(failure?.reason.message).not.toContain(first.payloadDigest);
+    const winner = await claims.findByKey(first);
+    expect([first.payloadDigest, second.payloadDigest]).toContain(winner?.payloadDigest);
+    expect((await owner.query('SELECT * FROM public.signup_idempotency_claims')).rows).toHaveLength(
+      1,
+    );
+  });
+
+  it('holds the claim row lock until transaction end with only the inert UPDATE grant', async () => {
+    await provision();
+    const key = binding();
+    const reserved = await claims.reserve(key, expiry());
+    const first = await runtime.connect();
+    const second = await runtime.connect();
+    try {
+      await first.query('BEGIN');
+      await second.query('BEGIN');
+      expect(await SignupIdempotencyClaimRepository.lockByKey(drizzle(first), key)).toEqual(
+        reserved.claim,
+      );
+      await second.query("SET LOCAL lock_timeout = '100ms'");
+      await expect(
+        SignupIdempotencyClaimRepository.lockByKey(drizzle(second), key),
+      ).rejects.toMatchObject({ cause: { code: '55P03' } });
+      await second.query('ROLLBACK');
+      await first.query('COMMIT');
+      await second.query('BEGIN');
+      expect(await SignupIdempotencyClaimRepository.lockByKey(drizzle(second), key)).toEqual(
+        reserved.claim,
+      );
+      expect(
+        await SignupIdempotencyClaimRepository.lockByKey(drizzle(second), binding()),
+      ).toBeNull();
+      await expect(
+        SignupIdempotencyClaimRepository.lockByKey(drizzle(second), {
+          ...key,
+          payloadDigest: randomBytes(32).toString('hex'),
+        }),
+      ).rejects.toBeInstanceOf(SignupIdempotencyConflictError);
+    } finally {
+      await first.query('ROLLBACK');
+      await second.query('ROLLBACK');
+      first.release();
+      second.release();
+    }
+  });
+
+  it.each([
+    ['COMMIT', false],
+    ['COMMIT', true],
+    ['ROLLBACK', false],
+    ['ROLLBACK', true],
+  ] as const)(
+    'waits for an invisible reservation: %s, conflicting payload=%s',
+    async (outcome, conflict) => {
+      await provision();
+      const key = binding();
+      const first = await runtime.connect();
+      const second = await runtime.connect();
+      let pending: Promise<unknown> | undefined;
+      try {
+        await first.query('BEGIN');
+        await first.query("SET LOCAL statement_timeout = '3s'");
+        const original = await new SignupIdempotencyClaimRepository(drizzle(first)).reserve(
+          key,
+          expiry(),
+        );
+        const pid = (await second.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+        await second.query("SET statement_timeout = '3s'");
+        const contender = conflict ? { ...key, payloadDigest: binding().payloadDigest } : key;
+        pending = new SignupIdempotencyClaimRepository(drizzle(second)).reserve(
+          contender,
+          expiry(),
+        );
+        // Register rejection immediately, including if lock observation fails.
+        void pending.catch(() => undefined);
+        const deadline = Date.now() + 2_000;
+        let blocked = false;
+        while (Date.now() < deadline) {
+          blocked = (
+            await owner.query('SELECT cardinality(pg_blocking_pids($1)) > 0 AS blocked', [pid])
+          ).rows[0].blocked;
+          if (blocked) break;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(blocked).toBe(true);
+        await first.query(outcome);
+        if (outcome === 'COMMIT' && conflict) {
+          await expect(pending).rejects.toBeInstanceOf(SignupIdempotencyConflictError);
+          expect(await claims.findByKey(key)).toEqual(original.claim);
+        } else if (outcome === 'COMMIT') {
+          expect(await pending).toEqual({ claim: original.claim, reserved: false });
+        } else {
+          expect(await pending).toMatchObject({ reserved: true, claim: contender });
+          expect((await claims.findByKey(key))?.id).not.toBe(original.claim.id);
+        }
+      } finally {
+        await first.query('ROLLBACK');
+        await pending?.catch(() => undefined);
+        await second.query('RESET statement_timeout');
+        first.release();
+        second.release();
+      }
+    },
+  );
+
+  it.each([
+    'id = gen_random_uuid()',
+    'key_version = 1',
+    'hmac_key_version = 2',
+    "key_digest = repeat('b', 64)",
+    'payload_version = 1',
+    "payload_digest = repeat('c', 64)",
+    'created_at = now()',
+    "expires_at = now() + interval '2 days'",
+  ])('denies claim identity/binding/timestamp UPDATE: %s', async (assignment) => {
+    await provision();
+    const key = binding();
+    const original = await claims.reserve(key, expiry());
+    await expect(
+      runtime.query(`UPDATE public.signup_idempotency_claims SET ${assignment}`),
+    ).rejects.toMatchObject({ code: '42501' });
+    expect(await claims.findByKey(key)).toEqual(original.claim);
+  });
+
+  it('allows an inert no-op but rejects changing the locking anchor and removing claims', async () => {
+    await provision();
+    await claims.reserve(binding(), expiry());
+    await runtime.query('UPDATE public.signup_idempotency_claims SET lock_anchor = false');
+    await expect(
+      runtime.query('UPDATE public.signup_idempotency_claims SET lock_anchor = true'),
+    ).rejects.toMatchObject({ code: '23514' });
+    for (const sql of [
+      'DELETE FROM public.signup_idempotency_claims',
+      'TRUNCATE public.signup_idempotency_claims CASCADE',
+    ]) {
+      await expect(runtime.query(sql)).rejects.toMatchObject({ code: '42501' });
+    }
+  });
+
+  it('keeps results immutable, unique, secret-free and linked to a retained claim', async () => {
+    await provision();
+    const { claim } = await claims.reserve(binding(), expiry());
+    const original = await results.recordAccepted(claim.id);
+    expect(original).toMatchObject({
+      claimId: claim.id,
+      resultVersion: 1,
+      statusCode: 202,
+      responseBody: { status: 'accepted' },
+    });
+    await expect(results.recordAccepted(claim.id)).rejects.toMatchObject({
+      cause: { code: '23505' },
+    });
+    await expect(results.recordAccepted(randomUUID())).rejects.toMatchObject({
+      cause: { code: '23503' },
+    });
+    for (const sql of [
+      'UPDATE public.signup_idempotency_results SET created_at = now()',
+      'UPDATE public.signup_idempotency_results SET claim_id = gen_random_uuid()',
+      'DELETE FROM public.signup_idempotency_results',
+      'TRUNCATE public.signup_idempotency_results',
+      'SELECT * FROM public.signup_idempotency_results FOR UPDATE',
+    ])
+      await expect(runtime.query(sql)).rejects.toMatchObject({ code: '42501' });
+    await expect(
+      owner.query('DELETE FROM public.signup_idempotency_claims WHERE id = $1', [claim.id]),
+    ).rejects.toMatchObject({ code: '23503' });
+    expect(await results.findByClaimId(claim.id)).toEqual(original);
+  });
+
+  it.each([
+    [2, 202, { status: 'accepted' }],
+    [1, 201, { status: 'accepted' }],
+    [1, 202, {}],
+    [1, 202, { status: 'accepted', password: 'do-not-store' }],
+    [1, 202, { status: 'accepted', idempotencyKey: 'do-not-store' }],
+    [1, 202, null],
+    [1, 202, []],
+  ])('rejects unsupported or secret-bearing result shapes %#', async (version, status, body) => {
+    await provision();
+    const { claim } = await claims.reserve(binding(), expiry());
+    await expect(
+      runtime.query(
+        'INSERT INTO public.signup_idempotency_results(claim_id, result_version, status_code, response_body) VALUES($1, $2, $3, $4::jsonb)',
+        [claim.id, version, status, JSON.stringify(body)],
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+    expect(await results.findByClaimId(claim.id)).toBeNull();
+  });
+
+  it.each([
+    { keyVersion: 2 },
+    { payloadVersion: 2 },
+    { hmacKeyVersion: 0 },
+    { keyDigest: 'raw-idempotency-key' },
+    { payloadDigest: 'raw-password' },
+    { keyDigest: 'A'.repeat(64) },
+    { payloadDigest: 'a'.repeat(63) },
+  ])('rejects invalid claim contracts and digests %#', async (invalid) => {
+    await provision();
+    await expect(claims.reserve({ ...binding(), ...invalid }, expiry())).rejects.toMatchObject({
+      cause: { code: '23514' },
+    });
+    expect((await owner.query('SELECT * FROM public.signup_idempotency_claims')).rows).toHaveLength(
+      0,
+    );
+  });
+
+  it.each(['now()', "now() - interval '1 day'", "'infinity'::timestamptz"])(
+    'rejects non-future/non-finite initial expiry: %s',
+    async (expiresAt) => {
+      await provision();
+      await expect(
+        runtime.query(
+          `INSERT INTO public.signup_idempotency_claims
+        (key_version, hmac_key_version, key_digest, payload_version, payload_digest, expires_at)
+        VALUES (1, 1, $1, 1, $2, ${expiresAt})`,
+          [binding().keyDigest, binding().payloadDigest],
+        ),
+      ).rejects.toMatchObject({ code: '23514' });
+    },
+  );
+
+  it('retains expired bindings and results; expiry never authorizes rebinding', async () => {
+    await provision();
+    const key = binding();
+    const stored = await owner.query(
+      `INSERT INTO public.signup_idempotency_claims
+      (key_version, hmac_key_version, key_digest, payload_version, payload_digest, created_at, expires_at)
+      VALUES (1, 1, $1, 1, $2, now() - interval '2 days', now() - interval '1 day')
+      RETURNING id, expires_at`,
+      [key.keyDigest, key.payloadDigest],
+    );
+    const originalExpiry = stored.rows[0].expires_at as Date;
+    const result = await results.recordAccepted(stored.rows[0].id);
+    const original = await claims.reserve(key, originalExpiry);
+    expect(original.reserved).toBe(false);
+    expect(original.claim.expiresAt.getTime()).toBeLessThan(Date.now());
+    expect(original.claim.expiresAt).toEqual(originalExpiry);
+    expect(await claims.reserve(key, expiry())).toEqual(original);
+    await expect(
+      claims.reserve({ ...key, payloadDigest: binding().payloadDigest }, originalExpiry),
+    ).rejects.toBeInstanceOf(SignupIdempotencyConflictError);
+    expect(await results.findByClaimId(original.claim.id)).toEqual(result);
+    expect(await claims.findByKey(key)).toEqual(original.claim);
+    await expect(results.recordAccepted(original.claim.id)).rejects.toMatchObject({
+      cause: { code: '23505' },
+    });
+    expect(await results.findByClaimId(original.claim.id)).toEqual(result);
+  });
+
+  it.each([new Date(0), new Date(NaN)])(
+    'rejects invalid new-claim expiry through a sanitized domain error: %s',
+    async (invalid) => {
+      await provision();
+      const key = binding();
+      const pending = claims.reserve(key, invalid);
+      await expect(pending).rejects.toBeInstanceOf(SignupIdempotencyExpiryError);
+      await expect(pending).rejects.not.toHaveProperty('cause');
+      expect(await claims.findByKey(key)).toBeNull();
+    },
+  );
+
+  it('maps a database expiry CHECK caused by clock disagreement without leaking query details', async () => {
+    await provision();
+    const key = binding();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(new Date('1999-01-01').getTime());
+    try {
+      const pending = claims.reserve(key, new Date('2000-01-01'));
+      await expect(pending).rejects.toBeInstanceOf(SignupIdempotencyExpiryError);
+      await expect(pending).rejects.not.toHaveProperty('cause');
+    } finally {
+      clock.mockRestore();
+    }
+    expect(await claims.findByKey(key)).toBeNull();
+  });
+
+  it.each(['COMMIT', 'ROLLBACK'] as const)(
+    'fails closed for invalid expiry while a retained claim is invisible: %s',
+    async (outcome) => {
+      await provision();
+      const key = binding();
+      const first = await runtime.connect();
+      const originalExpiry = new Date('2000-01-02');
+      try {
+        await first.query('BEGIN');
+        await first.query(
+          `INSERT INTO public.signup_idempotency_claims
+        (key_version, hmac_key_version, key_digest, payload_version, payload_digest, created_at, expires_at)
+        VALUES (1, 1, $1, 1, $2, '2000-01-01', $3)`,
+          [key.keyDigest, key.payloadDigest, originalExpiry],
+        );
+        await expect(claims.reserve(key, originalExpiry)).rejects.toBeInstanceOf(
+          SignupIdempotencyExpiryError,
+        );
+        await first.query(outcome);
+        if (outcome === 'COMMIT') {
+          expect(await claims.reserve(key, originalExpiry)).toMatchObject({
+            reserved: false,
+            claim: { ...key, expiresAt: originalExpiry },
+          });
+        } else {
+          await expect(claims.reserve(key, originalExpiry)).rejects.toBeInstanceOf(
+            SignupIdempotencyExpiryError,
+          );
+          expect(await claims.findByKey(key)).toBeNull();
+        }
+      } finally {
+        await first.query('ROLLBACK');
+        first.release();
+      }
+    },
+  );
+
+  it('atomically rolls back user, credential, audit and result while keeping the durable claim', async () => {
+    await provision();
+    const key = binding();
+    const { claim } = await claims.reserve(key, expiry());
+    const email = `${randomUUID()}@example.com`;
+    const failure = new Error('intentional caller rollback');
+    const database = { db: runtimeDb, pool: runtime };
+    const write = async (rollback: boolean) =>
+      runSignupTransaction(database, async (tx) => {
+        await SignupIdempotencyClaimRepository.lockByKey(tx, key);
+        const user = await new UserRepository(tx).create({ email, emailNormalized: email });
+        await new PasswordCredentialRepository(tx).create({
+          userId: user.id,
+          passwordHash: 'synthetic-hash',
+        });
+        await new SecurityAuditEventRepository(tx).recordUserCreated({ userId: user.id });
+        await new SignupIdempotencyResultRepository(tx).recordAccepted(claim.id);
+        if (rollback) throw failure;
+        return user;
+      });
+    await expect(write(true)).rejects.toBe(failure);
+    expect(await claims.findByKey(key)).toEqual(claim);
+    expect(await results.findByClaimId(claim.id)).toBeNull();
+    expect(await new UserRepository(runtimeDb).findByNormalizedEmail(email)).toBeNull();
+    expect((await owner.query('SELECT * FROM public.password_credentials')).rows).toHaveLength(0);
+    expect((await owner.query('SELECT * FROM public.security_audit_events')).rows).toHaveLength(1);
+    const user = await write(false);
+    expect(await results.findByClaimId(claim.id)).not.toBeNull();
+    expect(await new PasswordCredentialRepository(runtimeDb).findByUserId(user.id)).not.toBeNull();
+    expect(
+      (
+        await owner.query('SELECT * FROM public.security_audit_events WHERE user_id = $1', [
+          user.id,
+        ])
+      ).rows,
+    ).toHaveLength(1);
+    // Existing result failure must roll back subsequent account writes too.
+    const otherEmail = `${randomUUID()}@example.com`;
+    await expect(
+      runSignupTransaction(database, async (tx) => {
+        await new UserRepository(tx).create({ email: otherEmail, emailNormalized: otherEmail });
+        await new SignupIdempotencyResultRepository(tx).recordAccepted(claim.id);
+      }),
+    ).rejects.toMatchObject({ cause: { code: '23505' } });
+    expect(await new UserRepository(runtimeDb).findByNormalizedEmail(otherEmail)).toBeNull();
+  });
+
+  it('rolls back a reservation with its caller transaction and permits a later binding', async () => {
+    await provision();
+    const key = binding();
+    const failure = new Error('reservation not committed');
+    await expect(
+      runSignupTransaction({ db: runtimeDb, pool: runtime }, async (tx) => {
+        await new SignupIdempotencyClaimRepository(tx).reserve(key, expiry());
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(await claims.findByKey(key)).toBeNull();
+    expect(
+      (await claims.reserve({ ...key, payloadDigest: binding().payloadDigest }, expiry())).reserved,
+    ).toBe(true);
+  });
+
+  it('rejects PUBLIC binding UPDATE and rolls back all attempted provisioning grants', async () => {
+    await owner.query('GRANT UPDATE(payload_digest) ON public.signup_idempotency_claims TO PUBLIC');
+    try {
+      await expect(provision()).rejects.toThrow('Unsafe effective table privileges');
+      expect(
+        (
+          await owner.query(
+            "SELECT has_table_privilege($1::text, 'public.signup_idempotency_results', 'DELETE') AS allowed",
+            [roleName],
+          )
+        ).rows[0].allowed,
+      ).toBe(true);
+    } finally {
+      await owner.query(
+        'REVOKE UPDATE(payload_digest) ON public.signup_idempotency_claims FROM PUBLIC',
+      );
+    }
   });
 });

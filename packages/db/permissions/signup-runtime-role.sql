@@ -39,7 +39,8 @@ BEGIN
   EXECUTE pg_catalog.format('REVOKE ALL ON SCHEMA public FROM %I', runtime_name);
   EXECUTE pg_catalog.format('GRANT USAGE ON SCHEMA public TO %I', runtime_name);
 
-  FOREACH relation_name IN ARRAY ARRAY['users', 'password_credentials', 'security_audit_events'] LOOP
+  FOREACH relation_name IN ARRAY ARRAY['users', 'password_credentials', 'security_audit_events',
+      'signup_idempotency_claims', 'signup_idempotency_results'] LOOP
     relation_oid := pg_catalog.to_regclass(pg_catalog.format('public.%I', relation_name));
     IF relation_oid IS NULL OR NOT EXISTS (
       SELECT 1 FROM pg_catalog.pg_class WHERE oid = relation_oid AND relkind = 'r'
@@ -55,11 +56,16 @@ BEGIN
     -- Drizzle explicitly lists all columns, including DEFAULT expressions.
     -- PostgreSQL requires INSERT on those defaulted columns too.
     EXECUTE pg_catalog.format('GRANT SELECT, INSERT ON TABLE public.%I TO %I', relation_name, runtime_name);
+    IF relation_name = 'signup_idempotency_claims' THEN
+      -- SELECT FOR UPDATE requires UPDATE on at least one column. The CHECK
+      -- constraint fixes this inert column to false; identity/binding stay sealed.
+      EXECUTE pg_catalog.format('GRANT UPDATE (lock_anchor) ON TABLE public.%I TO %I', relation_name, runtime_name);
+    END IF;
 
     -- Effective checks include PUBLIC and column ACLs, not just direct grants.
     IF pg_catalog.has_table_privilege(runtime_name, relation_oid,
         'UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN,SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION')
-        OR pg_catalog.has_any_column_privilege(runtime_name, relation_oid, 'UPDATE,REFERENCES') THEN
+        OR pg_catalog.has_any_column_privilege(runtime_name, relation_oid, 'REFERENCES') THEN
       RAISE EXCEPTION 'Unsafe effective table privileges';
     END IF;
     FOR column_info IN SELECT attname FROM pg_catalog.pg_attribute
@@ -67,7 +73,9 @@ BEGIN
       IF NOT pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname, 'SELECT')
           OR NOT pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname, 'INSERT')
           OR pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname,
-             'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION') THEN
+             'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION')
+          OR pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname, 'UPDATE')
+             IS DISTINCT FROM (relation_name = 'signup_idempotency_claims' AND column_info.attname = 'lock_anchor') THEN
         RAISE EXCEPTION 'Unsafe effective table privileges';
       END IF;
     END LOOP;
@@ -85,7 +93,8 @@ BEGIN
     SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
       AND c.oid NOT IN ('public.users'::regclass, 'public.password_credentials'::regclass,
-                       'public.security_audit_events'::regclass)
+                       'public.security_audit_events'::regclass,
+                       'public.signup_idempotency_claims'::regclass, 'public.signup_idempotency_results'::regclass)
       AND ((c.relkind IN ('r','p','v','m','f') AND (
         pg_catalog.has_table_privilege(runtime_name, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
         OR pg_catalog.has_any_column_privilege(runtime_name, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')))
@@ -98,7 +107,8 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_class c
     WHERE c.oid NOT IN ('public.users'::regclass, 'public.password_credentials'::regclass,
-                       'public.security_audit_events'::regclass)
+                       'public.security_audit_events'::regclass,
+                       'public.signup_idempotency_claims'::regclass, 'public.signup_idempotency_results'::regclass)
       AND (EXISTS (SELECT 1 FROM pg_catalog.aclexplode(c.relacl) acl WHERE acl.grantee = runtime_role.oid)
         OR EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a,
           LATERAL pg_catalog.aclexplode(a.attacl) acl

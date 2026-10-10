@@ -14,3 +14,11 @@ export {
   SecurityAuditEventRepository,
   type SecurityAuditEventRepositoryDatabase,
 } from './security-audit-event.repository.js';
+export {
+  SignupIdempotencyClaimRepository,
+  SignupIdempotencyResultRepository,
+  SignupIdempotencyConflictError,
+  SignupIdempotencyExpiryError,
+  type SignupClaimBinding,
+  type SignupClaimKey,
+} from './signup-idempotency.repository.js';
