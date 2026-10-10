@@ -1,0 +1,6 @@
+\set ON_ERROR_STOP on
+-- Supply runtime_role with psql -v; never supply a password as a SQL variable.
+BEGIN;
+SELECT pg_catalog.set_config('authcore.runtime_role', :'runtime_role', true);
+\ir signup-runtime-role.sql
+COMMIT;

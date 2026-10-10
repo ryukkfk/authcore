@@ -2,23 +2,33 @@
 
 Last updated: 2026-10-10 (Asia/Rangoon)
 
-Status: transactional signup audit changes remain uncommitted on
-`feat/signup-transactional-audit`, based on `main` at
-`3c75b430562faef1922b9428069c42925566bb12`. The foundation was historically
-verified on `feat/signup-foundation`; Draft PR #4 baseline was `b1b8a9a`.
+Status: transactional signup audit is merged into GitHub `main` through
+[PR #7](https://github.com/ryukkfk/authcore/pull/7), merge commit
+`216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
+[CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113) completed successfully, including PostgreSQL, Redis and HTTP E2E.
+See [[Development Status]] for exact head, CI and development-only review-risk
+exception evidence. The foundation's earlier branch and Draft PR #4 checkpoint
+are historical.
 AUTH-001 — Registration remains in progress.
 The HTTP endpoint is disabled by default; see [[Security Defaults]].
 See [[Development Status]] for the verification checkpoint and remaining work.
+
+A separate development candidate on `feat/audit-runtime-permissions` now adds
+explicit runtime-role provisioning and permission regressions. Its nine combined
+E2E cases use genuinely restricted logins. It is locally tested, not merged or
+applied to live roles. See [runtime permissions](../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md)
+and [[Development Status]] for evidence and operating boundaries.
 
 The first durable signup audit slice is described in
 [Signup transactional security audit](../apps/api/SIGNUP_TRANSACTIONAL_AUDIT.md),
 including retention, rollback guarantees and isolated verification commands.
 
-The current October 10 user-run local checkpoint records 168 workspace tests
+The historical October 10 user-run local checkpoint records 168 workspace tests
 passed, 0 failed and 0 skipped; signup PostgreSQL 17/17, DB repository 25/25,
 dedicated Redis 28/28 and combined E2E 7/7 passed. Workspace lint, typecheck and
 build passed. These are user-reported local results, not candidate PR CI results
-or independent reviewer reruns. The linked audit note records the full checkpoint;
+or independent reviewer reruns. Current CI is recorded separately above. The
+linked audit note records the local checkpoint;
 the focused signup PostgreSQL rerun must not be counted again in workspace totals.
 
 `@authcore/db` exports `UserRepository`, `DuplicateUserEmailError`, `CreateUserInput`,
@@ -72,8 +82,9 @@ logged by signup. After commit, a structured `identity.user_created` log event c
 only the user ID. This remains an operational log; the same transaction's
 `security_audit_events` row is the durable audit source of truth.
 
-Database-enforced append-only protection is not implemented; SQL roles with the
-required privileges can update/delete audit rows. Audit retention and account
+The permissions candidate proves append-only access for a provisioned runtime
+principal in isolated tests. Existing live credentials have not been switched;
+SQL roles with broader privileges can still update/delete audit rows. Audit retention and account
 deletion policy are not finalized. Redis lease/COMMIT fencing and uncertain
 COMMIT reconciliation remain unresolved. Public signup remains disabled
 (`SIGNUP_ENABLED=false`); this is development-only work.
@@ -124,7 +135,8 @@ pnpm --filter @authcore/api test
 
 The suites create randomly named `identity_test_*` and `signup_test_*` databases,
 apply the checked-in migrations there, and drop only those databases after testing.
-The database role needs `CREATEDB` permission. Whole-database isolation is necessary
+The test administrator needs `CREATEDB`; the new permissions and combined E2E
+suites also need `CREATEROLE` for disposable test logins. Whole-database isolation is necessary
 because the credential migration explicitly references `public.users`.
 Existing application tables are not used.
 If `TEST_DATABASE_URL` is absent, the suite is explicitly skipped; it never falls
@@ -147,10 +159,12 @@ constructor type metadata (the development runner's behavior).
 CI builds workspace packages before typechecking and testing because dependent
 packages resolve their public entrypoints from `dist`.
 
-## Next work — registration policy and verification events
+## Next work — audit permissions proposal and registration features
 
-[[Roadmap#AUTH-001 — Registration]] remains in progress. Define and implement registration
-policy and verification-event creation/delivery. Existing signup rate limiting and
+[[Audit Database Permissions Plan]] now records a locally implemented permissions
+candidate with runtime-role separation and permission-denial regressions. Its
+review, CI and any separately authorized runtime-role adoption remain pending. [[Roadmap#AUTH-001 — Registration]] remains in progress.
+Registration policy and verification-event creation/delivery remain pending. Existing signup rate limiting and
 admission controls remain in place. Timing-resistant account-enumeration protection,
 transactional outbox delivery and the audit/COMMIT limitations above remain pending.
 Production deployment is not ready.

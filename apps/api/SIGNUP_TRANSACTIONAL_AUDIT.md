@@ -35,11 +35,13 @@ rows simply to bypass the foreign key is not an account-deletion workflow.
 Disposable test databases explicitly clear audit rows before users, then are
 dropped. This cleanup is confined to test-owned databases.
 
-Database-enforced append-only protection is not implemented. This is durable
-transactional storage, not tamper-evident storage or a new database privilege
-model. A SQL role with the required privileges can modify or
-delete rows. PostgreSQL persistence/backup configuration continues to govern
-durability; no infrastructure or role privileges are changed here.
+A subsequent development candidate adds an explicit restricted-runtime
+permission artifact and isolated regressions; see
+[Signup runtime permissions](../../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md).
+Existing live credentials and roles have not been switched. A SQL role with
+broader privileges, database owner or superuser can still modify/delete history.
+Storage is not tamper-evident; PostgreSQL persistence/backup configuration governs
+durability. No permission changes are automatically run by signup or migrations.
 
 ## Transaction behavior
 
@@ -72,9 +74,28 @@ The existing post-commit `identity.user_created` operational log is preserved.
 `security_audit_events` is the durable source of truth; operational logs are
 neither proof of transaction durability nor required for the event to exist.
 
+## Integrated checkpoint — 2026-10-10
+
+[PR #7](https://github.com/ryukkfk/authcore/pull/7) is merged into `main` at
+`216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
+The exact submitted head was `a2999cc87969aba161cab8316c6cb28ab7bc4ae8`;
+the merge used the merge method and expected-head precondition.
+[PR CI #15](https://github.com/ryukkfk/authcore/actions/runs/38041587321) and
+[CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113) both completed successfully. The latter validates the
+merge commit, including PostgreSQL, Redis and combined HTTP E2E checks.
+
+The [owner-recorded development-only risk exception](https://github.com/ryukkfk/authcore/pull/7#issuecomment-6096463245) is recorded.
+It is not independent human security approval or a waiver of public-launch
+blockers. Signup remains disabled by default; no deployment or production-setting
+change was performed. See [Development Status](../../docs/Development%20Status.md)
+and the [audit permissions implementation plan](../../docs/Audit%20Database%20Permissions%20Plan.md).
+The subsequent permissions candidate is locally implemented and tested in a
+separate branch, not merged or applied to live roles. See Development Status for
+its 260-test local checkpoint, distinct from the PR #7 CI evidence above.
+
 ## Verification
 
-### Current user-run local checkpoint — 2026-10-10 (Asia/Rangoon)
+### Historical user-run local checkpoint — 2026-10-10 (Asia/Rangoon)
 
 Branch: `feat/signup-transactional-audit`. Base: `main` at
 `3c75b430562faef1922b9428069c42925566bb12`.
@@ -93,9 +114,10 @@ formatting cleanup. They are not CI results or independent reviewer reruns.
 The signup PostgreSQL cases run within workspace tests when TEST_DATABASE_URL is
 supplied; their focused rerun is not an additional set of distinct tests.
 Earlier counts in related notes are historical checkpoints, not current totals.
-Candidate PR CI still needs to run against the submitted revision. Public signup
-remains disabled (`SIGNUP_ENABLED=false`); these results do not authorize public
-launch or constitute independent human security approval.
+Candidate PR CI subsequently passed, followed by successful post-merge CI; see
+the integrated checkpoint above. Public signup remains disabled by default
+(`SIGNUP_ENABLED=false`); these local results do not authorize public launch or
+constitute independent human security approval.
 
 ### P3 cleanup verification — 2026-10-10
 
@@ -128,7 +150,9 @@ Use the existing isolated infrastructure only. Do not run `db:migrate` as a test
 that command loads the application's `.env`. Test suites never fall back to
 `DATABASE_URL`; they create/drop only their own randomly named databases after
 validating local `authcore_test` on port 5432. PostgreSQL 17+ is required by the
-existing transaction-timeout checks. The supplied test role needs CREATEDB.
+existing transaction-timeout checks. The supplied test administrator needs CREATEDB;
+the new permissions and combined E2E suites also require CREATEROLE for their
+own disposable login roles.
 Redis suites use only UUID test namespaces on the dedicated port 6380 and never
 flush Redis. No commands below create/reconfigure containers or change `.env`.
 

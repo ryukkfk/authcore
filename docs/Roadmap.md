@@ -3,7 +3,7 @@
 Status: Active
 Version: 0.1
 
-Last updated: 2026-10-08 (Asia/Rangoon)
+Last updated: 2026-10-10 (Asia/Rangoon)
 
 Current implementation progress and verification evidence: [[Development Status]].
 The roadmap describes full ticket acceptance scope; implemented primitives do not
@@ -150,8 +150,11 @@ CI must run:
 
 Status:
 
-Configured — GitHub Actions defines install, lint, build, typecheck, unit tests, and
-PostgreSQL integration tests. Remote CI execution status is unverified here.
+Implemented — GitHub Actions runs install, lint, build, typecheck, workspace tests,
+PostgreSQL integration, Redis integration and combined HTTP/Redis/PostgreSQL E2E.
+[CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113) completed successfully at PR #7's merge commit
+`216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
+See [[Development Status]] for current and historical evidence.
 
 ---
 
@@ -301,17 +304,24 @@ Avoid unsafe assumptions about mailbox equivalence.
 
 Implement user registration.
 
-Status: In progress — transactional signup foundation and signup HTTP boundary are
-in Draft PR #4 at baseline `b1b8a9a`. Uncommitted development hardening adds loopback
-defaults, a validated default-false SIGNUP_ENABLED guard, query-safe error logging,
-and regression tests. See [[Identity Foundation]] and [[Security Defaults]].
+Status: In progress — signup foundation, HTTP boundary, disabled-by-default
+guard, abuse/admission controls, database transaction hardening and transactional
+signup audit storage are integrated into `main` through [PR #7](https://github.com/ryukkfk/authcore/pull/7).
+Post-merge CI passed at `216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
+These development increments do not complete AUTH-001. See [[Identity Foundation]],
+[[Development Status]] and [[Security Defaults]].
 
 Implemented: signup rejects disabled requests with consistent 403 before DTO validation,
 hashing or writes. Explicit isolated-development enablement preserves email validation,
 12–128-character passwords, generic 202 success/duplicate responses and safe errors.
 
-Next: registration policy, verification-event creation/delivery, signup rate limiting and
-abuse controls, timing-resistant account-enumeration protection, and durable audit.
+Next feature work: registration policy, verification-event creation/delivery and
+timing-resistant account-enumeration protection. Rate limiting, admission controls
+and transactional audit storage are implemented. Audit runtime-role protection is
+implemented in a separate locally tested candidate; its review and CI remain
+pending. Live runtime-role adoption is not performed; see [[Audit Database Permissions Plan]].
+Retention/account deletion, COMMIT fencing and unknown-outcome reconciliation
+remain unresolved.
 Equal response status/body alone does not establish timing resistance. Registration is
 incomplete and production deployment is not ready.
 
@@ -887,14 +897,22 @@ Next ticket
 
 Current milestone:
 
-**Phase 2 — Identity and Password Credentials: signup HTTP boundary locally verified**
+**Phase 2 — Identity and Password Credentials: transactional signup audit merged; signup disabled by default**
 
 Current next work:
 
-**AUTH-001 — Registration (in progress): registration policy and verification events,
-with rate limiting, abuse controls, timing resistance, and durable audit still pending.**
+**Current security follow-up: runtime database permission provisioning and
+regressions are locally implemented on `feat/audit-runtime-permissions`, awaiting
+CI/review; not merged or applied to live roles.** See [[Audit Database Permissions Plan]].
 
-Latest hardening verification: see [[Development Status]] for final local checks.
-Baseline remote CI passed at `b1b8a9a`; the hardening changes are not committed or pushed.
+**AUTH-001 — Registration remains in progress:** registration policy, verification
+events and timing resistance remain pending. Existing rate limiting, admission
+controls and transactional audit storage are merged. Other public-launch blockers
+remain recorded in [[Development Status]].
+
+Latest verification: [CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113) completed successfully for the PR #7
+merge commit `216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
+See [[Development Status]] for the owner-recorded development-only review-risk
+exception and separate historical local checks. No independent human review is claimed.
 Public production registration remains blocked. See [[Security Defaults]] for manual
 listener/container checks and remaining public-enablement requirements.

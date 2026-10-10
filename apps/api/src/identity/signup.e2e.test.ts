@@ -7,6 +7,7 @@ import { type INestApplication, Logger, Module, ValidationPipe } from '@nestjs/c
 import { NestFactory } from '@nestjs/core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { verifyPassword } from '@authcore/crypto';
 import {
   createDatabaseClient,
   PasswordCredentialRepository,
@@ -51,12 +52,21 @@ function latch() {
 }
 
 describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
-  const databaseName = `signup_e2e_${randomUUID().replaceAll('-', '')}`;
+  const suffix = randomUUID().replaceAll('-', '');
+  const databaseName = `signup_e2e_${suffix}`;
+  const runtimeRole = `signup_e2e_runtime_${suffix}`;
   const url = new URL(source);
   url.pathname = `/${databaseName}`;
+  const runtimeUrl = new URL(url);
+  runtimeUrl.username = runtimeRole;
+  runtimeUrl.password = randomUUID();
   const admin = createDatabaseClient({ connectionString: source.toString() });
+  // Fixtures/migrations use the owner; every HTTP signup uses a real limited login.
   const database = createDatabaseClient({ connectionString: url.toString() });
+  const runtime = createDatabaseClient({ connectionString: runtimeUrl.toString() });
   let created = false;
+  let roleCreated = false;
+  let permissionsSql: string;
   let app: INestApplication | undefined;
   let baseUrl: string;
   let redisService: RedisService | undefined;
@@ -69,10 +79,33 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
   const input = { email: 'lease@example.com', password: 'correct horse battery staple' };
   const admissionKey = () => `${namespace}:admission`;
 
+  async function provisionRuntime() {
+    const client = await database.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('authcore.runtime_role', $1, true)", [runtimeRole]);
+      await client.query(permissionsSql);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   beforeAll(async () => {
     expect((await admin.pool.query('SELECT current_database() AS name')).rows[0].name).toBe(
       'authcore_test',
     );
+    const roleSql = (
+      await admin.pool.query(
+        "SELECT format('CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', $1::text, $2::text) AS sql",
+        [runtimeRole, runtimeUrl.password],
+      )
+    ).rows[0].sql;
+    await admin.pool.query(roleSql);
+    roleCreated = true;
     await admin.pool.query(`CREATE DATABASE "${databaseName}"`);
     created = true;
     expect((await database.pool.query('SELECT current_database() AS name')).rows[0].name).toBe(
@@ -82,8 +115,19 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
     for (const name of (await readdir(folder)).filter((name) => name.endsWith('.sql')).sort()) {
       await database.pool.query(await readFile(new URL(name, folder), 'utf8'));
     }
+    // This explicit prerequisite is confined to the suite's disposable database.
+    await database.pool.query(`REVOKE TEMPORARY ON DATABASE "${databaseName}" FROM PUBLIC`);
+    permissionsSql = await readFile(
+      new URL('../../../../packages/db/permissions/signup-runtime-role.sql', import.meta.url),
+      'utf8',
+    );
+    await provisionRuntime();
+    expect((await runtime.pool.query('SELECT current_user, session_user')).rows[0]).toEqual({
+      current_user: runtimeRole,
+      session_user: runtimeRole,
+    });
     vi.stubEnv('NODE_ENV', 'test');
-    vi.stubEnv('DATABASE_URL', url.toString());
+    vi.stubEnv('DATABASE_URL', runtimeUrl.toString());
     vi.stubEnv('REDIS_URL', 'redis://127.0.0.1:6380');
     vi.stubEnv('WEB_ORIGIN', 'http://127.0.0.1');
     // Only this ephemeral test app opts in; .env and actual API stay disabled.
@@ -136,7 +180,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         SignupRateLimiter,
         SignupAdmission,
         SignupAdmissionInterceptor,
-        { provide: DatabaseService, useValue: { getClient: () => database } },
+        { provide: DatabaseService, useValue: { getClient: () => runtime } },
         { provide: RedisService, useValue: isolatedRedis },
       ],
     })
@@ -191,12 +235,20 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       redisService?.onApplicationShutdown();
       vi.unstubAllEnvs();
       try {
-        await database.pool.end();
+        await runtime.pool.end();
       } finally {
         try {
-          if (created) await admin.pool.query(`DROP DATABASE "${databaseName}"`);
+          await database.pool.end();
         } finally {
-          await admin.pool.end();
+          try {
+            if (created) await admin.pool.query(`DROP DATABASE "${databaseName}"`);
+          } finally {
+            try {
+              if (roleCreated) await admin.pool.query(`DROP ROLE "${runtimeRole}"`);
+            } finally {
+              await admin.pool.end();
+            }
+          }
         }
       }
     }
@@ -408,5 +460,58 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       credentials,
     );
     expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toEqual(events);
+  });
+
+  it('commits signup through the restricted login while audit mutation is denied', async () => {
+    expect((await send()).status).toBe(202);
+    const user = (await database.pool.query('SELECT * FROM users')).rows[0];
+    const credential = (await database.pool.query('SELECT * FROM password_credentials')).rows[0];
+    const event = (await database.pool.query('SELECT * FROM security_audit_events')).rows[0];
+    expect(credential.user_id).toBe(user.id);
+    expect(await verifyPassword(credential.password_hash, input.password)).toBe(true);
+    expect(event).toMatchObject({
+      user_id: user.id,
+      event_type: 'identity.user_created',
+      payload: {},
+    });
+    for (const sql of [
+      'UPDATE security_audit_events SET occurred_at = now()',
+      'DELETE FROM security_audit_events',
+      'TRUNCATE security_audit_events',
+    ]) {
+      await expect(runtime.pool.query(sql)).rejects.toMatchObject({ code: '42501' });
+    }
+    expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toEqual([
+      event,
+    ]);
+  });
+
+  it('rolls back all signup writes on denied audit INSERT and returns a safe HTTP error', async () => {
+    const errorLog = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    await database.pool.query(`REVOKE INSERT ON security_audit_events FROM "${runtimeRole}"`);
+    try {
+      const response = await send();
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: { code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
+      });
+      for (const table of ['users', 'password_credentials', 'security_audit_events']) {
+        expect((await database.pool.query(`SELECT * FROM ${table}`)).rows).toHaveLength(0);
+      }
+      expect(Logger.prototype.log).not.toHaveBeenCalled();
+      expect(errorLog).toHaveBeenCalledExactlyOnceWith({
+        event: 'http.unhandled_exception',
+        method: 'POST',
+      });
+      expect(releases).toHaveLength(1);
+      expect(releases[0]).toMatchObject({ emails: [], openTransactions: 0 });
+      expect(await redis.zCard(admissionKey())).toBe(0);
+    } finally {
+      await provisionRuntime();
+    }
+    expect((await send()).status).toBe(202);
+    for (const table of ['users', 'password_credentials', 'security_audit_events']) {
+      expect((await database.pool.query(`SELECT * FROM ${table}`)).rows).toHaveLength(1);
+    }
   });
 });

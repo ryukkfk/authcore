@@ -1,12 +1,17 @@
 # Development Security Defaults
 
-Last updated: 2026-10-08 (Asia/Rangoon)
+Last updated: 2026-10-10 (Asia/Rangoon)
 
 ## Merge scope
 
 The signup foundation is development-only code. Public registration is disabled by
 default in every NODE_ENV. These defaults support merging the foundation; they do
 not make registration ready for public production use.
+
+PR #7 is merged and post-merge CI passed. The owner-recorded development-only
+review-risk exception does not authorize deployment or public registration.
+See [[Development Status]] for the exact revision and evidence. This documentation
+update does not change actual environment values, containers or runtime roles.
 
 ## Configuration
 
@@ -69,10 +74,28 @@ and send a synthetic signup request with the flag absent/false: expect the disab
 403 response. Check from another LAN host when proving network isolation. Local
 listener snapshots alone do not prove internet accessibility or its absence.
 
+## Runtime database permissions candidate
+
+An isolated development candidate adds explicit provisioning for a dedicated
+SELECT/INSERT runtime login and tests denied audit mutation, DDL/escalation and
+mandatory-audit failure rollback. The existing ORM requires INSERT privileges on
+defaulted columns too, so direct SQL writers can choose values on newly appended
+events; this does not make history tamper-evident.
+No actual runtime credentials or roles have been switched. See
+[runtime permissions](../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md),
+[[Audit Database Permissions Plan]] and [[Development Status]].
+
 ## Public enablement remains blocked
 
-Before public enablement, implement and review registration policy, email ownership
-verification and unverified-account access restrictions, rate limiting before hashing,
-abuse/concurrency controls, timing-resistant enumeration defenses, durable audit and
-verification delivery, and controlled TLS/network exposure. These are not implemented
-by this change. See [[Identity Foundation]], [[Development Status]] and [[Roadmap]].
+Rate limiting before hashing, admission abuse controls and transactional signup
+audit storage are implemented and covered by current CI. They do not establish
+public readiness or an atomic Redis/PostgreSQL execution fence.
+
+Before public enablement, complete and review registration policy, email ownership
+verification/delivery and unverified-account access restrictions, timing-resistant
+enumeration defenses, review and authorized adoption of runtime-role protection,
+retention/account-deletion
+policy, COMMIT fencing and uncertain-outcome reconciliation, operational/capacity
+validation, and controlled TLS/network exposure.
+See [[Audit Database Permissions Plan]], [[Identity Foundation]],
+[[Development Status]] and [[Roadmap]].
