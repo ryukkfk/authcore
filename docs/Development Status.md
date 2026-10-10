@@ -32,13 +32,13 @@ explicit test credentials and the existing loopback-only test infrastructure.
 They are separate from the merged PR #7 CI checkpoint below and the user's
 historical local results.
 
-| Check | Result |
-| --- | --- |
-| Workspace lint, build and typecheck | PASS |
-| Workspace tests | 168 passed, 0 failed, 0 skipped |
+| Check                                        | Result                                             |
+| -------------------------------------------- | -------------------------------------------------- |
+| Workspace lint, build and typecheck          | PASS                                               |
+| Workspace tests                              | 168 passed, 0 failed, 0 skipped                    |
 | PostgreSQL repository/permission integration | 55 passed, including 30 new permission regressions |
-| Dedicated Redis integration | 28 passed |
-| Combined HTTP + Redis + PostgreSQL E2E | 9 passed, including 2 new permission cases |
+| Dedicated Redis integration                  | 28 passed                                          |
+| Combined HTTP + Redis + PostgreSQL E2E       | 9 passed, including 2 new permission cases         |
 
 Total: **260 distinct tests passed**, with no skips in these suites. The 17
 existing signup PostgreSQL tests are already included in workspace tests and
@@ -47,9 +47,27 @@ and after each local database suite; test credentials were not printed.
 The focused audit UPDATE-denial regression first failed against the no-op
 provisioning baseline and passed after permission enforcement was implemented.
 
-The candidate still requires its own CI and review; PR #7's owner exception is
-not independent human review or approval of this follow-up. Production deployment
-and public signup remain blocked.
+### Candidate CI verification — 2026-10-10
+
+[PR #8](https://github.com/ryukkfk/authcore/pull/8) remains Draft and unmerged.
+Head `98073418567d5f290dc56252b0f928ebed25a6cd` was validated by
+[CI run #17](https://github.com/ryukkfk/authcore/actions/runs/38047352812),
+which completed successfully on October 10, 2026.
+
+| Check                                        | CI #17 result |
+| -------------------------------------------- | ------------- |
+| Lint, build and typecheck                    | PASS          |
+| Workspace tests                              | 168 passed    |
+| PostgreSQL repository/permission integration | 55 passed     |
+| Dedicated Redis integration                  | 28 passed     |
+| Combined HTTP + Redis + PostgreSQL E2E       | 9 passed      |
+
+Total: **260 distinct tests passed**. The 17 signup PostgreSQL cases are already
+included in workspace tests and are not counted again. Independent human review
+is pending; PR #7's owner exception does not approve this follow-up.
+Live application database credentials and permissions have not been changed.
+`SIGNUP_ENABLED=false` remains the source default. Production deployment and
+public signup remain blocked.
 
 ## Current milestone
 

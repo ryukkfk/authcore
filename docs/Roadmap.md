@@ -318,8 +318,9 @@ hashing or writes. Explicit isolated-development enablement preserves email vali
 Next feature work: registration policy, verification-event creation/delivery and
 timing-resistant account-enumeration protection. Rate limiting, admission controls
 and transactional audit storage are implemented. Audit runtime-role protection is
-implemented in a separate locally tested candidate; its review and CI remain
-pending. Live runtime-role adoption is not performed; see [[Audit Database Permissions Plan]].
+implemented in [Draft PR #8](https://github.com/ryukkfk/authcore/pull/8), with
+successful CI #17; independent human review is pending and the PR remains unmerged.
+Live runtime-role adoption is not performed; see [[Audit Database Permissions Plan]].
 Retention/account deletion, COMMIT fencing and unknown-outcome reconciliation
 remain unresolved.
 Equal response status/body alone does not establish timing resistance. Registration is
@@ -902,16 +903,27 @@ Current milestone:
 Current next work:
 
 **Current security follow-up: runtime database permission provisioning and
-regressions are locally implemented on `feat/audit-runtime-permissions`, awaiting
-CI/review; not merged or applied to live roles.** See [[Audit Database Permissions Plan]].
+regressions are implemented on `feat/audit-runtime-permissions` in
+[PR #8](https://github.com/ryukkfk/authcore/pull/8), which remains Draft and unmerged.
+CI passed; independent human review is pending. Live application database
+credentials and permissions have not been changed.** See [[Audit Database Permissions Plan]].
 
 **AUTH-001 — Registration remains in progress:** registration policy, verification
 events and timing resistance remain pending. Existing rate limiting, admission
 controls and transactional audit storage are merged. Other public-launch blockers
 remain recorded in [[Development Status]].
 
-Latest verification: [CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113) completed successfully for the PR #7
-merge commit `216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
+Latest candidate verification: [CI run #17](https://github.com/ryukkfk/authcore/actions/runs/38047352812)
+completed successfully on October 10, 2026 for PR #8 head
+`98073418567d5f290dc56252b0f928ebed25a6cd`. Lint, build and typecheck passed;
+workspace 168, PostgreSQL integration 55, Redis integration 28 and combined
+HTTP/Redis/PostgreSQL E2E 9 passed: **260 distinct tests passed**. The 17 signup
+PostgreSQL cases are already included in workspace tests and are not counted again.
+`SIGNUP_ENABLED=false` remains the source default.
+
+Latest integrated verification: [CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113)
+completed successfully for the PR #7 merge commit
+`216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
 See [[Development Status]] for the owner-recorded development-only review-risk
 exception and separate historical local checks. No independent human review is claimed.
 Public production registration remains blocked. See [[Security Defaults]] for manual

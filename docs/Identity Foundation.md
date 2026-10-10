@@ -161,9 +161,14 @@ packages resolve their public entrypoints from `dist`.
 
 ## Next work — audit permissions proposal and registration features
 
-[[Audit Database Permissions Plan]] now records a locally implemented permissions
-candidate with runtime-role separation and permission-denial regressions. Its
-review, CI and any separately authorized runtime-role adoption remain pending. [[Roadmap#AUTH-001 — Registration]] remains in progress.
+[[Audit Database Permissions Plan]] records the runtime-role separation and
+permission-denial regressions in [PR #8](https://github.com/ryukkfk/authcore/pull/8),
+which remains Draft and unmerged. Head `98073418567d5f290dc56252b0f928ebed25a6cd`
+passed [CI #17](https://github.com/ryukkfk/authcore/actions/runs/38047352812) on
+October 10, 2026; see [[Development Status]] for the 260-test breakdown.
+Independent human review and any separately authorized runtime-role adoption
+remain pending. Live application database credentials and permissions have not
+been changed. [[Roadmap#AUTH-001 — Registration]] remains in progress.
 Registration policy and verification-event creation/delivery remain pending. Existing signup rate limiting and
 admission controls remain in place. Timing-resistant account-enumeration protection,
 transactional outbox delivery and the audit/COMMIT limitations above remain pending.
