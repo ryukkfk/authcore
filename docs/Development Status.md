@@ -1,11 +1,12 @@
 # AuthCore Development Status
 
-Last updated: 2026-10-09 (Asia/Rangoon)
+Last updated: 2026-10-10 (Asia/Rangoon)
 
-Current branch: `feat/signup-abuse-controls`. Latest security follow-up evidence is
-recorded below; the foundation and hardening checkpoints remain historical.
-Draft PR #4 contains the signup foundation and HTTP endpoint at baseline `b1b8a9a`.
-Development security hardening is currently an uncommitted working-tree change; no push or merge was performed.
+Current branch: `feat/signup-transactional-audit`, based on `main` at
+`3c75b430562faef1922b9428069c42925566bb12`. Current user-run local evidence is
+recorded below; earlier foundation, hardening and abuse-control records are historical.
+Draft PR #4 recorded the signup foundation and HTTP endpoint at baseline `b1b8a9a`.
+Transactional audit changes remain uncommitted; no push or merge was performed in this slice.
 See [[Security Defaults]] for the disabled signup policy and manual runtime checks.
 
 ## Current milestone
@@ -14,23 +15,61 @@ See [[Security Defaults]] for the disabled signup policy and manual runtime chec
 
 [[Roadmap#AUTH-001 — Registration]] remains in progress. Signup rate limiting and
 admission abuse controls are now implemented locally and disabled by default.
-Next work is registration policy, verification events, timing-resistant account-enumeration
-protection, and durable audit. Full registration is incomplete; production deployment is not ready.
+The first durable signup audit slice now writes user, credential and audit rows
+atomically. Next work includes registration policy, verification events,
+timing-resistant account-enumeration protection and the audit/COMMIT limitations below.
+Full registration is incomplete; production deployment is not ready.
+
+## Current user-run local verification — 2026-10-10
+
+The user reported these local results before the P3 documentation and formatting
+cleanup. They are not CI results or independent reviewer reruns. Earlier test
+counts and inventories below describe their dated historical checkpoints.
+
+| Check                                  | User-reported local result      |
+| -------------------------------------- | ------------------------------- |
+| Workspace tests                        | 168 passed, 0 failed, 0 skipped |
+| PostgreSQL signup integration          | 17/17 passed                    |
+| DB repository integration              | 25/25 passed                    |
+| Dedicated Redis integration            | 28/28 passed                    |
+| Combined HTTP + Redis + PostgreSQL E2E | 7/7 passed                      |
+| Workspace lint, typecheck and build    | PASS                            |
+
+The focused signup PostgreSQL rerun is already represented in workspace tests
+when TEST_DATABASE_URL is supplied and must not be added again as distinct tests.
+Candidate PR CI remains to be run against the submitted revision. Public signup
+remains disabled (`SIGNUP_ENABLED=false`). No human security approval is claimed.
+See [Signup transactional security audit](../apps/api/SIGNUP_TRANSACTIONAL_AUDIT.md)
+for transaction guarantees, migration details and isolated verification commands.
+
+The subsequent P3 cleanup separately passed changed-file formatting, whitespace,
+migration consistency, workspace lint and typecheck checks. Its workspace test
+run passed 151 tests, failed 0 and skipped the 17 PostgreSQL signup cases because
+TEST_DATABASE_URL was deliberately unset. PostgreSQL repository, dedicated Redis
+and combined E2E suites were not rerun during cleanup. This does not replace the
+user's earlier zero-skip checkpoint. See the audit note for cleanup details.
+
+Database-enforced append-only protection is not implemented: SQL roles with the
+required privileges can update/delete audit rows. Audit retention and account
+deletion policy are not finalized. Redis lease/COMMIT fencing and uncertain
+COMMIT reconciliation remain unresolved. Development-only Draft PR preparation
+does not authorize public signup enablement.
 
 ## Implemented foundation
 
 - NestJS API bootstrap, liveness/readiness endpoints, validated environment configuration,
   global validation pipe, and safe global exception filter are present.
-- PostgreSQL client, Drizzle migration workflow, `users` and `password_credentials` schemas,
+- PostgreSQL client, Drizzle migration workflow, `users`, `password_credentials` and
+  `security_audit_events` schemas,
   and transaction access through `DatabaseService` are present.
 - `UserRepository` supports exact normalized-email lookup and atomic duplicate-email handling.
 - `@authcore/crypto` provides centrally configured Argon2id hashing and password verification.
 - `PasswordCredentialRepository` accepts a borrowed database/transaction and persists only
   `userId` and the encoded `passwordHash`; lookup returns a credential or null.
 - `SignupService` normalizes email, hashes the exact password before opening a transaction,
-  and inserts user plus credential in one transaction shared by both repositories.
-- Duplicate email maps to `EmailAlreadyInUseError`; credential insertion failure rolls back
-  user creation. Plaintext passwords are neither persisted nor logged.
+  and inserts user, credential and audit in one transaction shared by all three repositories.
+- Duplicate email maps to `EmailAlreadyInUseError`; credential or audit insertion failure
+  rolls back all related writes. Plaintext passwords are neither persisted nor logged.
 - `IdentityModule` provides and exports `SignupService` and registers `AuthController`;
   Nest DI behavior is covered by a regression test.
 - Explicitly enabled `POST /api/v1/auth/signup` calls `SignupService` through `SignupDto`. Email is
@@ -42,8 +81,8 @@ protection, and durable audit. Full registration is incomplete; production deplo
   and return a safe 500 `INTERNAL_SERVER_ERROR` without sensitive internal details.
 - Coverage includes 3 controller unit tests and 18 signup HTTP integration cases.
   Enabled-route cases mock signup; disabled-route cases wire the real service with
-  hashing/transaction spies to prove no work occurs. Four separate signup PostgreSQL
-  tests cover persistence.
+  hashing/transaction spies to prove no work occurs. The historical foundation had
+  four signup PostgreSQL tests; the current suite has 17 cases.
 
 Implementation details: [[Identity Foundation]].
 
@@ -80,8 +119,10 @@ remains outside this documentation update.
   enablement still requires capacity, lease/failover and operational validation.
 - Implement and test timing-resistant account-enumeration protection. Equal response status/body
   alone does not establish timing resistance.
-- The post-commit `identity.user_created` log is an audit signal. Durable audit storage and
-  transactional outbox delivery remain future work.
+- The post-commit `identity.user_created` log is operational; transactional
+  `security_audit_events` storage now exists. Database-enforced append-only protection,
+  finalized retention/account deletion policy and transactional outbox delivery remain pending.
+- Redis lease/COMMIT fencing and uncertain COMMIT reconciliation remain unresolved.
 - Signup now enforces password input limits before hashing, as required by
   [[Security Requirements#SR-003 — Password Input Limits]]. Current HTTP regression tests cover 12/128-character acceptance, 11/129-character
   rejection and non-string input. Do not infer that all CRYPTO-001 acceptance criteria are verified.
@@ -107,7 +148,7 @@ from the conversation's API-004 label.
 - [[Security Requirements]]
 - [[Threat Model]]
 
-## Development hardening — 2026-10-08
+## Historical development hardening — 2026-10-08
 
 - API default/example host and Compose PostgreSQL/Redis bindings use IPv4 loopback.
 - Strict SIGNUP_ENABLED defaults to false in every environment; the startup guard
@@ -147,7 +188,7 @@ Redis and dedicated test Redis published ports bind only to `127.0.0.1` (5432,
 Existing environment overrides and actual API listeners still require private/manual
 verification; source defaults do not rewrite .env.
 
-## Signup abuse-control security follow-up — 2026-10-09
+## Historical signup abuse-control security follow-up — 2026-10-09
 
 Branch: `feat/signup-abuse-controls`. Both outstanding findings are addressed
 locally: P1 Redis handshake/post-send reply deadlines now tear down the affected

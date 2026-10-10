@@ -8,6 +8,8 @@ export {
   PasswordCredentialRepository,
   type CreatePasswordCredentialInput,
   type PasswordCredentialRepositoryDatabase,
+  SecurityAuditEventRepository,
+  type SecurityAuditEventRepositoryDatabase,
 } from './repositories/index.js';
 
 export {
@@ -17,6 +19,8 @@ export {
   users,
   type NewUser,
   type User,
+  securityAuditEvents,
+  type SecurityAuditEvent,
 } from './schema/index.js';
 
 export {

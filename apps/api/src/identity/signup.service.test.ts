@@ -8,6 +8,7 @@ import { hashPassword } from '@authcore/crypto';
 import {
   DuplicateUserEmailError,
   PasswordCredentialRepository,
+  securityAuditEvents,
   UserRepository,
 } from '@authcore/db';
 
@@ -29,7 +30,13 @@ vi.mock('@authcore/db', async (importOriginal) => ({
 }));
 
 function setup() {
-  const tx = { insert: vi.fn(), select: vi.fn(), execute: vi.fn().mockResolvedValue(undefined) };
+  const auditReturning = vi.fn(async () => [{}]);
+  const auditValues = vi.fn(() => ({ returning: auditReturning }));
+  const tx = {
+    insert: vi.fn(() => ({ values: auditValues })),
+    select: vi.fn(),
+    execute: vi.fn().mockResolvedValue(undefined),
+  };
   const transaction = vi.fn(async (callback: (value: typeof tx) => Promise<unknown>) =>
     callback(tx),
   );
@@ -58,6 +65,10 @@ function setup() {
     service: new SignupService(database),
     transaction,
     execute: tx.execute,
+    insert: tx.insert,
+    tx,
+    auditValues,
+    auditReturning,
     user,
     createUser,
     createCredential,
@@ -71,11 +82,35 @@ afterEach(() => {
 });
 
 describe('SignupService', () => {
-  it.each(['hash', 'timeout setup', 'user insert'])(
+  it('propagates an audit insert failure after credential creation without logging success', async () => {
+    const { service, insert, createCredential, audit } = setup();
+    const failure = new Error('audit insert failed');
+    insert.mockImplementation(() => {
+      throw failure;
+    });
+
+    await expect(service.signup({ email: 'user@example.com', password: 'secret' })).rejects.toBe(
+      failure,
+    );
+    expect(createCredential).toHaveBeenCalledOnce();
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it.each(['hash', 'timeout setup', 'user insert', 'credential insert', 'audit insert'])(
     'stops subsequent database work after lease loss during %s',
     async (stage) => {
       vi.useFakeTimers();
-      const { service, transaction, createUser, createCredential, execute, user, audit } = setup();
+      const {
+        service,
+        transaction,
+        createUser,
+        createCredential,
+        execute,
+        user,
+        insert,
+        auditReturning,
+        audit,
+      } = setup();
       const evalCommand = vi.fn().mockResolvedValueOnce(1).mockResolvedValue(0);
       const admission = new SignupAdmission({
         getClient: async () => ({ withCommandOptions: () => ({ eval: evalCommand }) }),
@@ -90,11 +125,24 @@ describe('SignupService', () => {
           return 'encoded-hash';
         });
       else if (stage === 'timeout setup') execute.mockImplementation(() => gate);
-      else
+      else if (stage === 'user insert')
         createUser.mockImplementation(async () => {
           await gate;
           return user;
         });
+      else if (stage === 'credential insert') {
+        const original = createCredential.getMockImplementation()!;
+        createCredential.mockImplementation(async (value) => {
+          const result = await original(value);
+          await gate;
+          return result;
+        });
+      } else {
+        auditReturning.mockImplementation(async () => {
+          await gate;
+          return [{}];
+        });
+      }
       const result = admission.run(() =>
         service.signup({ email: 'user@example.com', password: 'secret' }),
       );
@@ -104,7 +152,9 @@ describe('SignupService', () => {
       await rejected;
       if (stage === 'hash') expect(transaction).not.toHaveBeenCalled();
       if (stage === 'timeout setup') expect(createUser).not.toHaveBeenCalled();
-      expect(createCredential).not.toHaveBeenCalled();
+      if (stage !== 'credential insert' && stage !== 'audit insert')
+        expect(createCredential).not.toHaveBeenCalled();
+      if (stage !== 'audit insert') expect(insert).not.toHaveBeenCalled();
       expect(audit).not.toHaveBeenCalled();
     },
   );
@@ -161,7 +211,8 @@ describe('SignupService', () => {
   });
 
   it('hashes before opening the transaction and passes only allowed fields to persistence', async () => {
-    const { service, transaction, user, createUser, createCredential, audit } = setup();
+    const { service, transaction, user, createUser, createCredential, insert, auditValues, audit } =
+      setup();
     vi.mocked(hashPassword).mockImplementation(async () => {
       expect(transaction).not.toHaveBeenCalled();
       return 'encoded-hash';
@@ -180,6 +231,15 @@ describe('SignupService', () => {
       userId: user.id,
       passwordHash: 'encoded-hash',
     });
+    expect(insert).toHaveBeenCalledExactlyOnceWith(securityAuditEvents);
+    expect(auditValues).toHaveBeenCalledExactlyOnceWith({
+      eventType: 'identity.user_created',
+      userId: user.id,
+      payload: {},
+    });
+    expect(createCredential.mock.invocationCallOrder[0]).toBeLessThan(
+      insert.mock.invocationCallOrder[0]!,
+    );
     expect(audit).toHaveBeenCalledExactlyOnceWith({
       event: 'identity.user_created',
       userId: user.id,
@@ -199,22 +259,24 @@ describe('SignupService', () => {
   });
 
   it('maps duplicate email without inserting a credential or exposing error details', async () => {
-    const { service, createUser, createCredential, audit } = setup();
+    const { service, createUser, createCredential, insert, audit } = setup();
     createUser.mockRejectedValue(new DuplicateUserEmailError());
     const result = service.signup({ email: 'user@example.com', password: 'secret' });
     await expect(result).rejects.toBeInstanceOf(EmailAlreadyInUseError);
     await expect(result).rejects.not.toHaveProperty('cause');
     expect(createCredential).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
   });
 
   it('propagates credential failure out of the transaction without a success audit event', async () => {
-    const { service, createCredential, audit } = setup();
+    const { service, createCredential, insert, audit } = setup();
     const failure = new Error('credential insert failed');
     createCredential.mockRejectedValue(failure);
     await expect(service.signup({ email: 'user@example.com', password: 'secret' })).rejects.toBe(
       failure,
     );
+    expect(insert).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
   });
 
@@ -229,14 +291,10 @@ describe('SignupService', () => {
   });
 
   it('emits no success audit event when commit fails', async () => {
-    const { service, transaction, audit } = setup();
+    const { service, transaction, tx, audit } = setup();
     const failure = new Error('commit failed');
     transaction.mockImplementation(async (callback) => {
-      await callback({
-        insert: vi.fn(),
-        select: vi.fn(),
-        execute: vi.fn().mockResolvedValue(undefined),
-      });
+      await callback(tx);
       expect(audit).not.toHaveBeenCalled();
       throw failure;
     });

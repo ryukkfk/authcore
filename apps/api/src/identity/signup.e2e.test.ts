@@ -7,7 +7,12 @@ import { type INestApplication, Logger, Module, ValidationPipe } from '@nestjs/c
 import { NestFactory } from '@nestjs/core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDatabaseClient, PasswordCredentialRepository, UserRepository } from '@authcore/db';
+import {
+  createDatabaseClient,
+  PasswordCredentialRepository,
+  SecurityAuditEventRepository,
+  UserRepository,
+} from '@authcore/db';
 
 import { GlobalExceptionFilter } from '../common/filters/global-exception.filter.js';
 import { DatabaseService } from '../database/database.service.js';
@@ -153,6 +158,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
   }, 15_000);
 
   beforeEach(async () => {
+    await database.pool.query('DELETE FROM security_audit_events');
     await database.pool.query('DELETE FROM users');
     namespace = `authcore:test:{signup-e2e-${randomUUID()}}`;
     keys = new Set();
@@ -210,7 +216,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
     });
   }
 
-  it.each(['user', 'credential'])(
+  it.each(['user', 'credential', 'audit'])(
     'propagates lease loss after the real %s write, rolls back, and releases only its token',
     async (stage) => {
       const entered = latch();
@@ -226,10 +232,20 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
           await finish.promise;
           return result;
         });
-      } else {
+      } else if (stage === 'credential') {
         const original = PasswordCredentialRepository.prototype.create;
         vi.spyOn(PasswordCredentialRepository.prototype, 'create').mockImplementation(
           async function (this: PasswordCredentialRepository, value) {
+            const result = await original.call(this, value);
+            entered.open();
+            await finish.promise;
+            return result;
+          },
+        );
+      } else {
+        const original = SecurityAuditEventRepository.prototype.recordUserCreated;
+        vi.spyOn(SecurityAuditEventRepository.prototype, 'recordUserCreated').mockImplementation(
+          async function (this: SecurityAuditEventRepository, value) {
             const result = await original.call(this, value);
             entered.open();
             await finish.promise;
@@ -264,6 +280,9 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         expect(releases).toEqual([{ token, emails: [], openTransactions: 0 }]);
         expect(await redis.zRange(admissionKey(), 0, -1)).toEqual([replacement]);
         expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
+        expect(
+          (await database.pool.query('SELECT * FROM security_audit_events')).rows,
+        ).toHaveLength(0);
         expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(
           0,
         );
@@ -273,6 +292,9 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         expect(retry.status).toBe(202);
         expect(await retry.json()).toEqual({ status: 'accepted' });
         expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(1);
+        expect(
+          (await database.pool.query('SELECT * FROM security_audit_events')).rows,
+        ).toHaveLength(1);
         expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(
           1,
         );
@@ -313,6 +335,9 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       expect(releases.every((release) => release.emails.length === 0)).toBe(true);
       expect(await redis.zCard(admissionKey())).toBe(0);
       expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
+      expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(
+        0,
+      );
       expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(
         0,
       );
@@ -326,33 +351,62 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
     }
   });
 
-  it('sanitizes a real PostgreSQL constraint failure, rolls back, and recovers HTTP admission', async () => {
-    const errorLog = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
-    await database.pool.query(
-      'ALTER TABLE password_credentials ADD CONSTRAINT e2e_reject CHECK (false)',
-    );
-    try {
-      const response = await send();
-      expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({
-        error: { code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
-      });
-      expect(releases).toHaveLength(1);
-      expect(releases[0]!.emails).toEqual([]);
-      expect(releases[0]!.openTransactions).toBe(0);
+  it.each(['password_credentials', 'security_audit_events'])(
+    'sanitizes a real PostgreSQL %s constraint failure, rolls back, and recovers HTTP admission',
+    async (table) => {
+      const errorLog = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      await database.pool.query(`ALTER TABLE ${table} ADD CONSTRAINT e2e_reject CHECK (false)`);
+      try {
+        const response = await send();
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual({
+          error: { code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
+        });
+        expect(releases).toHaveLength(1);
+        expect(releases[0]!.emails).toEqual([]);
+        expect(releases[0]!.openTransactions).toBe(0);
+        expect(await redis.zCard(admissionKey())).toBe(0);
+        expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
+        expect(
+          (await database.pool.query('SELECT * FROM security_audit_events')).rows,
+        ).toHaveLength(0);
+        expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(
+          0,
+        );
+        expect(errorLog).toHaveBeenCalledExactlyOnceWith({
+          event: 'http.unhandled_exception',
+          method: 'POST',
+        });
+        expect(Logger.prototype.log).not.toHaveBeenCalled();
+      } finally {
+        await database.pool.query(`ALTER TABLE ${table} DROP CONSTRAINT e2e_reject`);
+      }
+      expect((await send()).status).toBe(202);
       expect(await redis.zCard(admissionKey())).toBe(0);
-      expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(
-        0,
+      expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(
+        1,
       );
-      expect(errorLog).toHaveBeenCalledExactlyOnceWith({
-        event: 'http.unhandled_exception',
-        method: 'POST',
-      });
-      expect(Logger.prototype.log).not.toHaveBeenCalled();
-    } finally {
-      await database.pool.query('ALTER TABLE password_credentials DROP CONSTRAINT e2e_reject');
-    }
-    expect((await send()).status).toBe(202);
-    expect(await redis.zCard(admissionKey())).toBe(0);
+    },
+  );
+
+  it('returns identical generic acceptance for successful and duplicate signup without changing credentials or audit', async () => {
+    const first = await send();
+    expect(first.status).toBe(202);
+    expect(await first.json()).toEqual({ status: 'accepted' });
+    const credentials = (await database.pool.query('SELECT * FROM password_credentials')).rows;
+    const events = (await database.pool.query('SELECT * FROM security_audit_events')).rows;
+    expect(events).toHaveLength(1);
+    const duplicate = await fetch(`${baseUrl}/api/v1/auth/signup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'LEASE@EXAMPLE.COM', password: 'a different secure password' }),
+    });
+    expect(duplicate.status).toBe(202);
+    expect(await duplicate.json()).toEqual({ status: 'accepted' });
+    expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(1);
+    expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toEqual(
+      credentials,
+    );
+    expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toEqual(events);
   });
 });

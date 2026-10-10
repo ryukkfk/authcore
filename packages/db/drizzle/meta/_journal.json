@@ -15,6 +15,13 @@
       "when": 1791378501610,
       "tag": "0001_password_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791618293703,
+      "tag": "0002_security_audit_events",
+      "breakpoints": true
     }
   ]
 }

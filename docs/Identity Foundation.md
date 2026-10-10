@@ -1,12 +1,25 @@
 # Identity foundation repository
 
-Last updated: 2026-10-08 (Asia/Rangoon)
+Last updated: 2026-10-10 (Asia/Rangoon)
 
-Status: transactional signup foundation and signup HTTP boundary implemented and locally
-verified on `feat/signup-foundation`; Draft PR #4 baseline is `b1b8a9a`.
-Development hardening remains uncommitted. AUTH-001 — Registration remains in progress.
+Status: transactional signup audit changes remain uncommitted on
+`feat/signup-transactional-audit`, based on `main` at
+`3c75b430562faef1922b9428069c42925566bb12`. The foundation was historically
+verified on `feat/signup-foundation`; Draft PR #4 baseline was `b1b8a9a`.
+AUTH-001 — Registration remains in progress.
 The HTTP endpoint is disabled by default; see [[Security Defaults]].
 See [[Development Status]] for the verification checkpoint and remaining work.
+
+The first durable signup audit slice is described in
+[Signup transactional security audit](../apps/api/SIGNUP_TRANSACTIONAL_AUDIT.md),
+including retention, rollback guarantees and isolated verification commands.
+
+The current October 10 user-run local checkpoint records 168 workspace tests
+passed, 0 failed and 0 skipped; signup PostgreSQL 17/17, DB repository 25/25,
+dedicated Redis 28/28 and combined E2E 7/7 passed. Workspace lint, typecheck and
+build passed. These are user-reported local results, not candidate PR CI results
+or independent reviewer reruns. The linked audit note records the full checkpoint;
+the focused signup PostgreSQL rerun must not be counted again in workspace totals.
 
 `@authcore/db` exports `UserRepository`, `DuplicateUserEmailError`, `CreateUserInput`,
 and `UserRepositoryDatabase` alongside `PasswordCredentialRepository` and its input/database types.
@@ -42,9 +55,10 @@ application operation receives validated input from the signup HTTP boundary;
 `IdentityService.createUser` remains unchanged.
 
 The service trims/normalizes email and uses `@authcore/crypto.hashPassword` before
-opening a transaction. It constructs both repositories with the same transaction,
-inserts the user and its credential, and returns only the user after commit. Any
-credential insert failure rolls back the user. `DuplicateUserEmailError` maps to
+opening a transaction. It constructs user, credential and security-audit repositories
+with the same transaction, inserts all three rows, and returns only the user after
+commit. Credential or audit insert failure rolls back all related writes.
+`DuplicateUserEmailError` maps to
 the existing `EmailAlreadyInUseError`; unrelated failures propagate.
 
 `PasswordCredentialRepository.create({ userId, passwordHash })` persists only those
@@ -55,7 +69,14 @@ one credential per user and cascading deletion. No additional migration is requi
 
 Passwords retain their exact whitespace when hashed. Neither input nor errors are
 logged by signup. After commit, a structured `identity.user_created` log event contains
-only the user ID. This is an audit signal, not a durable transactional audit store.
+only the user ID. This remains an operational log; the same transaction's
+`security_audit_events` row is the durable audit source of truth.
+
+Database-enforced append-only protection is not implemented; SQL roles with the
+required privileges can update/delete audit rows. Audit retention and account
+deletion policy are not finalized. Redis lease/COMMIT fencing and uncertain
+COMMIT reconciliation remain unresolved. Public signup remains disabled
+(`SIGNUP_ENABLED=false`); this is development-only work.
 
 ## Signup HTTP boundary
 
@@ -87,7 +108,8 @@ Three controller unit tests cover success, duplicate email, and unexpected-error
 The original seven HTTP integration tests cover 202 success, identical duplicate responses, invalid email,
 short password, unexpected fields, email trim with exact password whitespace, and safe 500
 handling. These use a real Nest HTTP server with a mocked `SignupService`; they are separate
-from the 4 PostgreSQL signup integration tests. The hardening regression cases additionally test 12/128-character acceptance,
+from the historical foundation's 4 PostgreSQL signup integration tests (the current
+suite has 17). The hardening regression cases additionally test 12/128-character acceptance,
 11/129-character rejection, non-string inputs, disabled-route hashing/write prevention
 and sensitive-query logging. The flag is explicitly enabled in the existing HTTP suite.
 
@@ -128,14 +150,18 @@ packages resolve their public entrypoints from `dist`.
 ## Next work — registration policy and verification events
 
 [[Roadmap#AUTH-001 — Registration]] remains in progress. Define and implement registration
-policy and verification-event creation/delivery. Signup rate limiting and its category,
-abuse controls, timing-resistant account-enumeration protection, durable audit storage,
-and transactional outbox delivery remain pending. Production deployment is not ready.
+policy and verification-event creation/delivery. Existing signup rate limiting and
+admission controls remain in place. Timing-resistant account-enumeration protection,
+transactional outbox delivery and the audit/COMMIT limitations above remain pending.
+Production deployment is not ready.
 API-004 remains [[Roadmap#API-004 — Global Error Handling]]; signup work belongs to AUTH-001.
 
+## Historical verification — 2026-10-08
+
 The historical pre-hardening checkpoint recorded API 33/33 and DB integration 14/14.
-The hardening working tree now passes build, typecheck, lint, 78 workspace tests
+The October 8 hardening working tree passed build, typecheck, lint, 78 workspace tests
 (config 24, crypto 5, DB unit 5, API 44) and 14 separate DB integration tests: 92
 distinct tests, no skips. API 44 includes the 4 PostgreSQL signup tests. See
 [[Development Status]] for execution evidence and [[Security Defaults]] for remaining
-runtime checks. These local results do not update remote PR CI; no push was performed.
+runtime checks. These historical local results do not describe the current test
+totals or update remote PR CI; no push was performed at that checkpoint.
