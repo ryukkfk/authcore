@@ -2,25 +2,107 @@
 
 Last updated: 2026-10-10 (Asia/Rangoon)
 
-Current branch: `feat/signup-transactional-audit`, based on `main` at
-`3c75b430562faef1922b9428069c42925566bb12`. Current user-run local evidence is
-recorded below; earlier foundation, hardening and abuse-control records are historical.
-Draft PR #4 recorded the signup foundation and HTTP endpoint at baseline `b1b8a9a`.
-Transactional audit changes remain uncommitted; no push or merge was performed in this slice.
+Current integrated revision: GitHub `main` at
+`216f4d2b8b00e813c4d580ca98b3a17cfb309181`, merged through [PR #7](https://github.com/ryukkfk/authcore/pull/7).
+Signup remains development-only and disabled by default. Earlier branch, local
+verification and working-tree inventories below are dated historical records.
 See [[Security Defaults]] for the disabled signup policy and manual runtime checks.
+
+## Current development candidate — runtime audit permissions
+
+Branch: `feat/audit-runtime-permissions`, in an isolated checkout based on merged
+`main` at `216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
+This follow-up adds an explicit permission-provisioning artifact and isolated
+regressions; it is not yet merged or applied to live runtime roles.
+
+- Existing runtime login must be separate from database/schema/table ownership and have no administrative attributes or role memberships.
+- Provisioning grants SELECT/INSERT on the three current signup tables; audit UPDATE/DELETE/TRUNCATE, DDL and escalation paths are denied. It checks effective PUBLIC/column privileges, writable views, callable SECURITY DEFINER routines, direct system-catalog/routine grants and privileged parameter grants.
+- The current ORM explicitly includes DEFAULT columns in INSERT, so table INSERT is required. Direct SQL writers can choose values on new audit rows; existing rows are protected. No tamper-evidence claim is made.
+- Every combined HTTP/Redis/PostgreSQL E2E signup now uses a genuine restricted LOGIN. Denied mandatory audit INSERT rolls back user/credential writes and returns the existing safe HTTP error.
+- Prior schema migrations, runtime configuration, dependencies and signup service behavior are unchanged. No application credential, production role or public-signup setting was changed.
+
+Implementation and operating boundaries:
+[Signup runtime permissions](../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md) and
+[[Audit Database Permissions Plan]].
+
+### Candidate local validation — 2026-10-10
+
+These checks were executed locally in the isolated candidate checkout, with
+explicit test credentials and the existing loopback-only test infrastructure.
+They are separate from the merged PR #7 CI checkpoint below and the user's
+historical local results.
+
+| Check                                        | Result                                             |
+| -------------------------------------------- | -------------------------------------------------- |
+| Workspace lint, build and typecheck          | PASS                                               |
+| Workspace tests                              | 168 passed, 0 failed, 0 skipped                    |
+| PostgreSQL repository/permission integration | 55 passed, including 30 new permission regressions |
+| Dedicated Redis integration                  | 28 passed                                          |
+| Combined HTTP + Redis + PostgreSQL E2E       | 9 passed, including 2 new permission cases         |
+
+Total: **260 distinct tests passed**, with no skips in these suites. The 17
+existing signup PostgreSQL tests are already included in workspace tests and
+are not counted again. Disposable database and role inventories matched before
+and after each local database suite; test credentials were not printed.
+The focused audit UPDATE-denial regression first failed against the no-op
+provisioning baseline and passed after permission enforcement was implemented.
+
+### Candidate CI verification — 2026-10-10
+
+[PR #8](https://github.com/ryukkfk/authcore/pull/8) remains Draft and unmerged.
+Head `98073418567d5f290dc56252b0f928ebed25a6cd` was validated by
+[CI run #17](https://github.com/ryukkfk/authcore/actions/runs/38047352812),
+which completed successfully on October 10, 2026.
+
+| Check                                        | CI #17 result |
+| -------------------------------------------- | ------------- |
+| Lint, build and typecheck                    | PASS          |
+| Workspace tests                              | 168 passed    |
+| PostgreSQL repository/permission integration | 55 passed     |
+| Dedicated Redis integration                  | 28 passed     |
+| Combined HTTP + Redis + PostgreSQL E2E       | 9 passed      |
+
+Total: **260 distinct tests passed**. The 17 signup PostgreSQL cases are already
+included in workspace tests and are not counted again. Independent human review
+is pending; PR #7's owner exception does not approve this follow-up.
+Live application database credentials and permissions have not been changed.
+`SIGNUP_ENABLED=false` remains the source default. Production deployment and
+public signup remain blocked.
 
 ## Current milestone
 
 **Phase 2 — Identity and Password Credentials: signup HTTP boundary disabled by default.**
 
 [[Roadmap#AUTH-001 — Registration]] remains in progress. Signup rate limiting and
-admission abuse controls are now implemented locally and disabled by default.
+admission abuse controls and transactional audit storage are merged into `main`.
 The first durable signup audit slice now writes user, credential and audit rows
 atomically. Next work includes registration policy, verification events,
 timing-resistant account-enumeration protection and the audit/COMMIT limitations below.
 Full registration is incomplete; production deployment is not ready.
 
-## Current user-run local verification — 2026-10-10
+## Latest integrated checkpoint — 2026-10-10
+
+[PR #7](https://github.com/ryukkfk/authcore/pull/7) merged into GitHub `main` at 16:47:34 (Asia/Rangoon), using
+the merge method with exact expected head `a2999cc87969aba161cab8316c6cb28ab7bc4ae8`.
+Merge commit: `216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
+The merged state, main ref and both merge parents were checked independently
+after the merge. This describes the remote integrated revision; the local
+checkout was not switched or synchronized by this documentation update.
+
+- [PR CI run #15](https://github.com/ryukkfk/authcore/actions/runs/38041587321): completed/success for the submitted head.
+- [CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113): completed/success for the merge commit.
+- Post-merge lint, build, typecheck, workspace tests, PostgreSQL integration, Redis integration and combined HTTP/Redis/PostgreSQL E2E steps all completed successfully.
+- The [owner-recorded development-only risk exception](https://github.com/ryukkfk/authcore/pull/7#issuecomment-6096463245) is recorded for PR #7. No independent human security review or approval is claimed. The exception does not waive public-launch blockers.
+- `SIGNUP_ENABLED=false` remains the source default. No deployment, signup activation or production-setting change was performed. Existing live environment overrides were not inspected or changed.
+
+The checks above are GitHub Actions evidence. Earlier local test counts remain
+user-reported historical checkpoints; they are not new local reruns.
+
+The recommended permissions follow-up is now implemented and locally tested in
+the separate candidate described above. It is not merged or applied to live
+roles. Registration policy and verification events remain pending AUTH-001 work.
+
+## Historical user-run local verification — 2026-10-10
 
 The user reported these local results before the P3 documentation and formatting
 cleanup. They are not CI results or independent reviewer reruns. Earlier test
@@ -37,8 +119,9 @@ counts and inventories below describe their dated historical checkpoints.
 
 The focused signup PostgreSQL rerun is already represented in workspace tests
 when TEST_DATABASE_URL is supplied and must not be added again as distinct tests.
-Candidate PR CI remains to be run against the submitted revision. Public signup
-remains disabled (`SIGNUP_ENABLED=false`). No human security approval is claimed.
+Candidate PR CI subsequently passed, followed by successful post-merge CI; see
+the latest integrated checkpoint above. Public signup remains disabled by default
+(`SIGNUP_ENABLED=false`). No independent human security approval is claimed.
 See [Signup transactional security audit](../apps/api/SIGNUP_TRANSACTIONAL_AUDIT.md)
 for transaction guarantees, migration details and isolated verification commands.
 
@@ -49,11 +132,12 @@ TEST_DATABASE_URL was deliberately unset. PostgreSQL repository, dedicated Redis
 and combined E2E suites were not rerun during cleanup. This does not replace the
 user's earlier zero-skip checkpoint. See the audit note for cleanup details.
 
-Database-enforced append-only protection is not implemented: SQL roles with the
-required privileges can update/delete audit rows. Audit retention and account
+A permission-provisioning artifact now enforces append-only access for its
+restricted principal in isolated tests. Existing live runtime credentials have
+not been switched; roles with broader privileges can still update/delete rows. Audit retention and account
 deletion policy are not finalized. Redis lease/COMMIT fencing and uncertain
-COMMIT reconciliation remain unresolved. Development-only Draft PR preparation
-does not authorize public signup enablement.
+COMMIT reconciliation remain unresolved. The development-only merge and recorded
+review-risk exception do not authorize public signup enablement.
 
 ## Implemented foundation
 
@@ -115,21 +199,23 @@ remains outside this documentation update.
 ## Remaining work and boundaries
 
 - Define and implement registration policy and verification-event creation/delivery.
-- Signup rate limiting and admission are locally implemented and verified; public
+- Signup rate limiting and admission are merged and covered by CI; public
   enablement still requires capacity, lease/failover and operational validation.
 - Implement and test timing-resistant account-enumeration protection. Equal response status/body
   alone does not establish timing resistance.
 - The post-commit `identity.user_created` log is operational; transactional
-  `security_audit_events` storage now exists. Database-enforced append-only protection,
-  finalized retention/account deletion policy and transactional outbox delivery remain pending.
+  `security_audit_events` storage now exists. Restricted-role provisioning and
+  regressions are implemented in the current candidate; review and any actual
+  runtime-role adoption remain pending, alongside finalized retention/account
+  deletion policy and transactional outbox delivery.
 - Redis lease/COMMIT fencing and uncertain COMMIT reconciliation remain unresolved.
 - Signup now enforces password input limits before hashing, as required by
   [[Security Requirements#SR-003 — Password Input Limits]]. Current HTTP regression tests cover 12/128-character acceptance, 11/129-character
   rejection and non-string input. Do not infer that all CRYPTO-001 acceptance criteria are verified.
 - The current identity schema stores email on `users`; a separate `user_emails` table from
   the original roadmap is not implemented.
-- Baseline PR CI run #8 succeeded at `b1b8a9a`; it does not validate the uncommitted hardening.
-  Production deployment is not ready.
+- Current integrated CI evidence is run #16 at the merge commit above. Baseline
+  PR CI run #8 at `b1b8a9a` is historical. Production deployment is not ready.
 
 ## Ticket naming
 
