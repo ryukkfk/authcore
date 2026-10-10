@@ -6,7 +6,8 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { passwordCredentials, users } from '../schema/index.js';
+import { passwordCredentials, securityAuditEvents, users } from '../schema/index.js';
+import { SecurityAuditEventRepository } from './security-audit-event.repository.js';
 import { PasswordCredentialRepository } from './password-credential.repository.js';
 import { DuplicateUserEmailError, UserRepository } from './user.repository.js';
 
@@ -37,6 +38,7 @@ describe.skipIf(!connectionString)('UserRepository PostgreSQL integration', () =
   const db = drizzle(pool);
   const repository = new UserRepository(db);
   const credentials = new PasswordCredentialRepository(db);
+  const auditEvents = new SecurityAuditEventRepository(db);
   const input = { email: 'User@Example.COM', emailNormalized: 'user@example.com' };
   let databaseCreated = false;
 
@@ -54,6 +56,7 @@ describe.skipIf(!connectionString)('UserRepository PostgreSQL integration', () =
   }, 15_000);
 
   beforeEach(async () => {
+    await db.delete(securityAuditEvents);
     await db.delete(users);
   });
 
@@ -237,5 +240,73 @@ describe.skipIf(!connectionString)('UserRepository PostgreSQL integration', () =
     ).rejects.toBe(failure);
     expect(await db.select().from(users)).toHaveLength(0);
     expect(await db.select().from(passwordCredentials)).toHaveLength(0);
+  });
+
+  it('enforces one creation event per user, including concurrent audit writers', async () => {
+    const user = await repository.create(input);
+    const results = await Promise.allSettled([
+      auditEvents.recordUserCreated({ userId: user.id }),
+      auditEvents.recordUserCreated({ userId: user.id }),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find((result) => result.status === 'rejected')?.reason).toMatchObject({
+      cause: { code: '23505', constraint: 'security_audit_events_type_user_unique' },
+    });
+    expect(await db.select().from(securityAuditEvents)).toHaveLength(1);
+  });
+
+  it('rejects orphan events and restricts user deletion while retaining the audit', async () => {
+    await expect(auditEvents.recordUserCreated({ userId: randomUUID() })).rejects.toMatchObject({
+      cause: { code: '23503' },
+    });
+    const user = await repository.create(input);
+    const credential = await credentials.create({ userId: user.id, passwordHash: 'original-hash' });
+    const event = await auditEvents.recordUserCreated({ userId: user.id });
+    await expect(db.delete(users)).rejects.toMatchObject({ cause: { code: '23503' } });
+    expect(await db.select().from(securityAuditEvents)).toEqual([event]);
+    expect(await credentials.findByUserId(user.id)).toEqual(credential);
+    expect(await repository.findByNormalizedEmail(input.emailNormalized)).toEqual(user);
+  });
+
+  it.each([
+    {},
+    { password: 'secret' },
+    { passwordHash: 'hash' },
+    { body: {} },
+    { idempotencyKey: 'raw-key' },
+    null,
+    [],
+    'secret',
+  ])('enforces the payload allowlist in PostgreSQL for %j', async (payload) => {
+    const user = await repository.create(input);
+    const write = pool.query(
+      'INSERT INTO security_audit_events (event_type, user_id, payload) VALUES ($1, $2, $3::jsonb)',
+      ['identity.user_created', user.id, JSON.stringify(payload)],
+    );
+    if (
+      payload !== null &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      Object.keys(payload).length === 0
+    ) {
+      await write;
+      expect(await db.select().from(securityAuditEvents)).toHaveLength(1);
+    } else {
+      await expect(write).rejects.toMatchObject({
+        code: '23514',
+        constraint: 'security_audit_events_payload_check',
+      });
+      expect(await db.select().from(securityAuditEvents)).toHaveLength(0);
+    }
+  });
+
+  it('rejects arbitrary event text so secrets cannot be stored as an event type', async () => {
+    const user = await repository.create(input);
+    await expect(
+      pool.query('INSERT INTO security_audit_events (event_type, user_id) VALUES ($1, $2)', [
+        'secret-bearing-event',
+        user.id,
+      ]),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'security_audit_events_type_check' });
   });
 });

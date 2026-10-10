@@ -69,11 +69,31 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
     const folder = new URL('../../../../packages/db/drizzle/', import.meta.url);
     const migrations = (await readdir(folder)).filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrations) {
+      if (name === '0002_security_audit_events.sql') {
+        // Exercise the additive migration against a populated pre-audit schema.
+        const legacy = await users.create({
+          email: 'historical@example.com',
+          emailNormalized: 'historical@example.com',
+        });
+        const original = await credentials.create({
+          userId: legacy.id,
+          passwordHash: 'legacy-hash',
+        });
+        await client.pool.query(await readFile(new URL(name, folder), 'utf8'));
+        expect((await client.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(
+          0,
+        );
+        expect(await users.findByNormalizedEmail(legacy.emailNormalized)).toEqual(legacy);
+        expect(await credentials.findByUserId(legacy.id)).toEqual(original);
+        continue;
+      }
       await client.pool.query(await readFile(new URL(name, folder), 'utf8'));
     }
   }, 15_000);
 
   beforeEach(async () => {
+    // Explicit cleanup is confined to this suite's disposable UUID database.
+    await client.pool.query('DELETE FROM security_audit_events');
     await client.pool.query('DELETE FROM users');
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
   });
@@ -383,7 +403,7 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
     }
   });
 
-  it('commits a normalized user and verifiable Argon2id credential without plaintext', async () => {
+  it('commits a normalized user, verifiable credential and exactly one safe audit event', async () => {
     const user = await service.signup(input);
     expect(user).toMatchObject({ email: 'User@Example.COM', emailNormalized: 'user@example.com' });
     expect(await users.findByNormalizedEmail('user@example.com')).toEqual(user);
@@ -398,6 +418,26 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
       'SELECT row_to_json(u) AS user, row_to_json(c) AS credential FROM users u JOIN password_credentials c ON c.user_id = u.id',
     );
     expect(JSON.stringify(stored.rows)).not.toContain(input.password);
+    const events = (await client.pool.query('SELECT * FROM security_audit_events')).rows;
+    expect(events).toEqual([
+      {
+        id: expect.any(String),
+        event_type: 'identity.user_created',
+        user_id: user.id,
+        occurred_at: expect.any(Date),
+        payload: {},
+      },
+    ]);
+    const serialized = JSON.stringify(events);
+    for (const sensitive of [
+      input.password,
+      credential!.passwordHash,
+      input.email,
+      'password',
+      'idempotency',
+    ]) {
+      expect(serialized).not.toContain(sensitive);
+    }
     expect(Logger.prototype.log).toHaveBeenCalledExactlyOnceWith({
       event: 'identity.user_created',
       userId: user.id,
@@ -413,6 +453,7 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
     expect(await credentials.findByUserId(user.id)).toEqual(original);
     expect((await client.pool.query('SELECT * FROM users')).rows).toHaveLength(1);
     expect((await client.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(1);
+    expect((await client.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(1);
     expect(Logger.prototype.log).toHaveBeenCalledOnce();
   });
 
@@ -427,6 +468,18 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
     expect(failures[0]?.reason).toBeInstanceOf(EmailAlreadyInUseError);
     expect((await client.pool.query('SELECT * FROM users')).rows).toHaveLength(1);
     expect((await client.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(1);
+    const [winner] = results.filter((result) => result.status === 'fulfilled');
+    const user = winner!.value;
+    const credential = await credentials.findByUserId(user.id);
+    const winningPassword = results[0]?.status === 'fulfilled' ? input.password : 'other password';
+    await expect(verifyPassword(credential!.passwordHash, winningPassword)).resolves.toBe(true);
+    expect((await client.pool.query('SELECT * FROM security_audit_events')).rows).toEqual([
+      expect.objectContaining({
+        user_id: user.id,
+        event_type: 'identity.user_created',
+        payload: {},
+      }),
+    ]);
   });
 
   it('rolls back the user when PostgreSQL rejects its credential insert', async () => {
@@ -437,6 +490,7 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
       await expect(service.signup(input)).rejects.toMatchObject({ cause: { code: '23514' } });
       expect(await users.findByNormalizedEmail('user@example.com')).toBeNull();
       expect((await client.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(0);
+      expect((await client.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(0);
       expect(Logger.prototype.log).not.toHaveBeenCalled();
     } finally {
       await client.pool.query(
@@ -445,5 +499,36 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
     }
     // A failed signup must not poison later transactions or claim the email.
     await expect(service.signup(input)).resolves.toHaveProperty('id');
+  });
+
+  it('rolls back the user and credential when PostgreSQL rejects the mandatory audit insert', async () => {
+    await client.pool.query(
+      'ALTER TABLE security_audit_events ADD CONSTRAINT reject_test_audit CHECK (false)',
+    );
+    try {
+      await expect(service.signup(input)).rejects.toMatchObject({ cause: { code: '23514' } });
+      for (const table of ['users', 'password_credentials', 'security_audit_events']) {
+        expect((await client.pool.query(`SELECT * FROM ${table}`)).rows).toHaveLength(0);
+      }
+      expect(Logger.prototype.log).not.toHaveBeenCalled();
+    } finally {
+      await client.pool.query(
+        'ALTER TABLE security_audit_events DROP CONSTRAINT reject_test_audit',
+      );
+    }
+    await expect(service.signup(input)).resolves.toHaveProperty('id');
+    expect((await client.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(1);
+  });
+
+  it('does not invent an event or replace credentials for a legacy account on duplicate signup', async () => {
+    const user = await users.create({
+      email: 'User@Example.COM',
+      emailNormalized: 'user@example.com',
+    });
+    const original = await credentials.create({ userId: user.id, passwordHash: 'legacy-hash' });
+    await expect(service.signup(input)).rejects.toBeInstanceOf(EmailAlreadyInUseError);
+    expect(await credentials.findByUserId(user.id)).toEqual(original);
+    expect((await client.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(0);
+    expect(Logger.prototype.log).not.toHaveBeenCalled();
   });
 });

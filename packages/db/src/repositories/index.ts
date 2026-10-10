@@ -10,3 +10,7 @@ export {
   type CreateUserInput,
   type UserRepositoryDatabase,
 } from './user.repository.js';
+export {
+  SecurityAuditEventRepository,
+  type SecurityAuditEventRepositoryDatabase,
+} from './security-audit-event.repository.js';

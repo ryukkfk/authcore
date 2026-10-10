@@ -4,6 +4,7 @@ import { hashPassword } from '@authcore/crypto';
 import {
   DuplicateUserEmailError,
   PasswordCredentialRepository,
+  SecurityAuditEventRepository,
   setSignupTransactionTimeouts,
   runSignupTransaction,
   UserRepository,
@@ -41,12 +42,15 @@ export class SignupService {
         assertSignupLease();
         await setSignupTransactionTimeouts(tx);
         assertSignupLease();
-        // This service owns the transaction; both repositories borrow exactly tx.
+        // All three writes borrow exactly this transaction/connection.
         const users = new UserRepository(tx);
         const credentials = new PasswordCredentialRepository(tx);
+        const auditEvents = new SecurityAuditEventRepository(tx);
         const created = await users.create({ email, emailNormalized });
         assertSignupLease();
         await credentials.create({ userId: created.id, passwordHash });
+        assertSignupLease();
+        await auditEvents.recordUserCreated({ userId: created.id });
         assertSignupLease();
         return created;
       });
@@ -55,7 +59,8 @@ export class SignupService {
       throw error;
     }
 
-    // Emit only committed state and non-sensitive identifiers; never log input/errors.
+    // Operational log only. The transaction's security_audit_events row is the
+    // durable source of truth; this log is neither required nor sufficient for it.
     this.logger.log({ event: 'identity.user_created', userId: user.id });
     return user;
   }
