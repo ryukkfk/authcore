@@ -18,9 +18,18 @@ import { SignupAdmission, SignupAdmissionUnavailable } from './signup-admission.
 import { RedisService } from '../redis/redis.service.js';
 
 vi.mock('@authcore/crypto', () => ({ hashPassword: vi.fn() }));
+// Unit tests exercise service sequencing; real connection ownership is covered
+// by PostgreSQL regressions and the combined HTTP E2E suite.
+vi.mock('@authcore/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authcore/db')>()),
+  runSignupTransaction: (
+    client: { db: { transaction: (work: unknown) => unknown } },
+    work: unknown,
+  ) => client.db.transaction(work),
+}));
 
 function setup() {
-  const tx = { insert: vi.fn(), select: vi.fn() };
+  const tx = { insert: vi.fn(), select: vi.fn(), execute: vi.fn().mockResolvedValue(undefined) };
   const transaction = vi.fn(async (callback: (value: typeof tx) => Promise<unknown>) =>
     callback(tx),
   );
@@ -48,6 +57,7 @@ function setup() {
   return {
     service: new SignupService(database),
     transaction,
+    execute: tx.execute,
     user,
     createUser,
     createCredential,
@@ -61,11 +71,11 @@ afterEach(() => {
 });
 
 describe('SignupService', () => {
-  it.each(['hash', 'user insert'])(
+  it.each(['hash', 'timeout setup', 'user insert'])(
     'stops subsequent database work after lease loss during %s',
     async (stage) => {
       vi.useFakeTimers();
-      const { service, transaction, createUser, createCredential, user, audit } = setup();
+      const { service, transaction, createUser, createCredential, execute, user, audit } = setup();
       const evalCommand = vi.fn().mockResolvedValueOnce(1).mockResolvedValue(0);
       const admission = new SignupAdmission({
         getClient: async () => ({ withCommandOptions: () => ({ eval: evalCommand }) }),
@@ -79,6 +89,7 @@ describe('SignupService', () => {
           await gate;
           return 'encoded-hash';
         });
+      else if (stage === 'timeout setup') execute.mockImplementation(() => gate);
       else
         createUser.mockImplementation(async () => {
           await gate;
@@ -92,10 +103,63 @@ describe('SignupService', () => {
       finish();
       await rejected;
       if (stage === 'hash') expect(transaction).not.toHaveBeenCalled();
+      if (stage === 'timeout setup') expect(createUser).not.toHaveBeenCalled();
       expect(createCredential).not.toHaveBeenCalled();
       expect(audit).not.toHaveBeenCalled();
     },
   );
+  it('fails closed before writes when PostgreSQL rejects timeout configuration', async () => {
+    const { service, execute, createUser, createCredential, audit } = setup();
+    const failure = new Error('timeout configuration rejected');
+    execute.mockRejectedValue(failure);
+    await expect(service.signup({ email: 'user@example.com', password: 'secret' })).rejects.toBe(
+      failure,
+    );
+    expect(createUser).not.toHaveBeenCalled();
+    expect(createCredential).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('keeps admission occupied until the transaction rollback settles', async () => {
+    const { service, transaction, createUser, audit } = setup();
+    const failure = new Error('database timeout');
+    const evalCommand = vi.fn().mockResolvedValue(1);
+    const admission = new SignupAdmission({
+      getClient: async () => ({ withCommandOptions: () => ({ eval: evalCommand }) }),
+    } as unknown as RedisService);
+    let finishRollback!: () => void;
+    let startedRollback!: () => void;
+    const rollingBack = new Promise<void>((resolve) => {
+      startedRollback = resolve;
+    });
+    const rollback = new Promise<void>((resolve) => {
+      finishRollback = resolve;
+    });
+    createUser.mockRejectedValue(failure);
+    transaction.mockImplementation(async (callback) => {
+      try {
+        return await callback({ insert: vi.fn(), select: vi.fn(), execute: vi.fn() });
+      } catch (error) {
+        startedRollback();
+        await rollback;
+        throw error;
+      }
+    });
+    const result = admission.run(() =>
+      service.signup({ email: 'user@example.com', password: 'secret' }),
+    );
+    const rejected = expect(result).rejects.toBe(failure);
+    try {
+      await rollingBack;
+      expect(evalCommand).toHaveBeenCalledTimes(1);
+      expect(audit).not.toHaveBeenCalled();
+    } finally {
+      finishRollback();
+      await rejected;
+    }
+    expect(evalCommand).toHaveBeenCalledTimes(2);
+  });
+
   it('hashes before opening the transaction and passes only allowed fields to persistence', async () => {
     const { service, transaction, user, createUser, createCredential, audit } = setup();
     vi.mocked(hashPassword).mockImplementation(async () => {
@@ -168,7 +232,11 @@ describe('SignupService', () => {
     const { service, transaction, audit } = setup();
     const failure = new Error('commit failed');
     transaction.mockImplementation(async (callback) => {
-      await callback({ insert: vi.fn(), select: vi.fn() });
+      await callback({
+        insert: vi.fn(),
+        select: vi.fn(),
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
       expect(audit).not.toHaveBeenCalled();
       throw failure;
     });

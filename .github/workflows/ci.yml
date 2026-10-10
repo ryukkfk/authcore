@@ -82,3 +82,6 @@ jobs:
 
       - name: Redis integration tests
         run: pnpm --filter @authcore/api test:redis
+
+      - name: Signup HTTP Redis PostgreSQL E2E tests
+        run: pnpm --filter @authcore/api test:e2e

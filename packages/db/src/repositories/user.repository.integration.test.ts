@@ -12,6 +12,18 @@ import { DuplicateUserEmailError, UserRepository } from './user.repository.js';
 
 // Opt in explicitly: never fall back to an application's DATABASE_URL.
 const connectionString = process.env.TEST_DATABASE_URL;
+if (connectionString) {
+  const url = new URL(connectionString);
+  if (
+    !['postgres:', 'postgresql:'].includes(url.protocol) ||
+    !['127.0.0.1', 'localhost'].includes(url.hostname) ||
+    !['', '5432'].includes(url.port) ||
+    url.pathname !== '/authcore_test' ||
+    url.search ||
+    url.hash
+  )
+    throw new Error('TEST_DATABASE_URL must target local port 5432 authcore_test without options');
+}
 
 describe.skipIf(!connectionString)('UserRepository PostgreSQL integration', () => {
   const databaseName = `identity_test_${randomUUID().replaceAll('-', '')}`;
@@ -29,9 +41,13 @@ describe.skipIf(!connectionString)('UserRepository PostgreSQL integration', () =
   let databaseCreated = false;
 
   beforeAll(async () => {
+    expect((await admin.query('SELECT current_database() AS name')).rows[0].name).toBe(
+      'authcore_test',
+    );
     // The migration explicitly references public.users, so isolate the entire DB.
     await admin.query(`CREATE DATABASE "${databaseName}"`);
     databaseCreated = true;
+    expect((await pool.query('SELECT current_database() AS name')).rows[0].name).toBe(databaseName);
     await migrate(db, {
       migrationsFolder: fileURLToPath(new URL('../../drizzle', import.meta.url)),
     });

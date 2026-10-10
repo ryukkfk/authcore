@@ -17,7 +17,7 @@ import { SignupEnabledGuard } from './signup-enabled.guard.js';
 import { SignupRateLimitGuard } from './signup-rate-limit.guard.js';
 import { SignupRateLimiter } from './signup-rate-limiter.js';
 import { RedisService } from '../redis/redis.service.js';
-import { SignupAdmission } from './signup-admission.js';
+import { assertSignupLease, SignupAdmission } from './signup-admission.js';
 import { SignupAdmissionInterceptor } from './signup-admission.interceptor.js';
 
 const signup = vi.fn();
@@ -145,6 +145,45 @@ const validInput = {
 };
 
 describe('POST /api/v1/auth/signup', () => {
+  it('propagates lease loss through the real HTTP async context and recovers capacity', async () => {
+    let entered!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    // Fake only renewal timers; HTTP sockets and monotonic time remain real.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    admissionEval.mockResolvedValueOnce(1).mockResolvedValueOnce(0).mockResolvedValue(1);
+    signup.mockImplementation(async () => {
+      entered();
+      await gate;
+      assertSignupLease();
+    });
+    const pending = sendSignup(validInput);
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(admissionEval).toHaveBeenCalledTimes(2);
+      finish();
+      const response = await pending;
+      expect(response.status).toBe(503);
+      expect(response.headers.get('retry-after')).toBe('1');
+      expect(await response.json()).toEqual({
+        error: { code: 'HTTP_503', message: 'Signup temporarily unavailable' },
+      });
+      expect(admissionEval).toHaveBeenCalledTimes(3);
+    } finally {
+      finish();
+      vi.useRealTimers();
+      await pending;
+    }
+    signup.mockResolvedValue(undefined);
+    expect((await sendSignup(validInput)).status).toBe(202);
+  });
+
   it('rejects excess concurrent HTTP requests while keeping four operations admitted', async () => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => {

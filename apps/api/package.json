@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:redis": "vitest run --config vitest.redis-integration.config.ts"
+    "test:redis": "vitest run --config vitest.redis-integration.config.ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
     "@authcore/config": "workspace:*",

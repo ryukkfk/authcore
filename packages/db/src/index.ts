@@ -18,3 +18,12 @@ export {
   type NewUser,
   type User,
 } from './schema/index.js';
+
+export {
+  setSignupTransactionTimeouts,
+  runSignupTransaction,
+  SIGNUP_LOCK_TIMEOUT_MS,
+  SIGNUP_STATEMENT_TIMEOUT_MS,
+  SIGNUP_TRANSACTION_TIMEOUT_MS,
+  SIGNUP_IDLE_TRANSACTION_TIMEOUT_MS,
+} from './signup-transaction.js';

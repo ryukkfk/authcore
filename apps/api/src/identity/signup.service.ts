@@ -4,6 +4,8 @@ import { hashPassword } from '@authcore/crypto';
 import {
   DuplicateUserEmailError,
   PasswordCredentialRepository,
+  setSignupTransactionTimeouts,
+  runSignupTransaction,
   UserRepository,
   type User,
 } from '@authcore/db';
@@ -35,7 +37,9 @@ export class SignupService {
 
     let user: User;
     try {
-      user = await this.database.getClient().db.transaction(async (tx) => {
+      user = await runSignupTransaction(this.database.getClient(), async (tx) => {
+        assertSignupLease();
+        await setSignupTransactionTimeouts(tx);
         assertSignupLease();
         // This service owns the transaction; both repositories borrow exactly tx.
         const users = new UserRepository(tx);
