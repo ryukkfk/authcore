@@ -6,3 +6,9 @@ export {
 
 export { users, type NewUser, type User } from './users.js';
 export { securityAuditEvents, type SecurityAuditEvent } from './security-audit-events.js';
+export {
+  signupIdempotencyClaims,
+  signupIdempotencyResults,
+  type SignupIdempotencyClaim,
+  type SignupIdempotencyResult,
+} from './signup-idempotency.js';

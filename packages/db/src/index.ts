@@ -31,3 +31,17 @@ export {
   SIGNUP_TRANSACTION_TIMEOUT_MS,
   SIGNUP_IDLE_TRANSACTION_TIMEOUT_MS,
 } from './signup-transaction.js';
+export {
+  SignupIdempotencyClaimRepository,
+  SignupIdempotencyResultRepository,
+  SignupIdempotencyConflictError,
+  SignupIdempotencyExpiryError,
+  type SignupClaimBinding,
+  type SignupClaimKey,
+} from './repositories/signup-idempotency.repository.js';
+export {
+  signupIdempotencyClaims,
+  signupIdempotencyResults,
+  type SignupIdempotencyClaim,
+  type SignupIdempotencyResult,
+} from './schema/signup-idempotency.js';
