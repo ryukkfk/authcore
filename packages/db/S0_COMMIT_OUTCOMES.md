@@ -2,7 +2,7 @@
 
 S0 is test only. Baseline: `a0bd2d7ff6499e393a3dabb46617f6292f23c84e`.
 Design reviewed: PR #11 at `c860496cebc7919f1ad7fb56705db6e15cf57eb7`.
-No D01â€“D13 approval is inferred. No S1â€“S6 behavior is implemented.
+No D01–D13 approval is inferred. No S1–S6 behavior is implemented.
 `SIGNUP_ENABLED=false`; public signup and production readiness remain unapproved.
 
 ## Evidence boundary
@@ -190,7 +190,7 @@ or stalled-COMMIT deadlines, crash/power-loss/failover durability, or future HTT
   S1/S4 implementation; S0 does not fix it.
 - **P2 / scope:** Phase B HTTP replay and T1/T2/T3 orchestration do not exist. These
   owner/repository/transport tests must never be reported as future HTTP behavior passing.
-- D01â€“D13 remain pending owner decisions. PR #11 stays open and Draft, unmodified.
+- D01–D13 remain pending owner decisions. PR #11 stays open and Draft, unmodified.
 
 Unknown COMMIT cannot be made definite by cleanup or a new ROLLBACK. Independent
 positive state can prove success; lock/fresh lookup provides protocol synchronization,
