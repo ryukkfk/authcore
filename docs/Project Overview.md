@@ -1,5 +1,14 @@
 # AuthCore
 
+Implementation checkpoint (2026-10-12): [Development Status](Development%20Status.md) tracks the
+reviewed PR #9 merge (`d51559cf`), [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583),
+and development-only boundaries. The project's goals below include **planned**
+capabilities; AUTH-001 registration, verification delivery and production readiness
+are incomplete. Transactional signup audit (PR #7), restricted database
+permissions (PR #8), and inactive Phase A idempotency ledger foundations (PR #9)
+are integrated. `SIGNUP_ENABLED=false` remains the source default. The dated
+PR #8 candidate evidence is archived in [Runtime Permissions Checkpoint](Runtime%20Permissions%20Checkpoint.md).
+
 AuthCore is a production-oriented Identity and Access Management platform.
 
 The goal of the project is to build a secure authentication and authorization system while learning production-grade backend architecture, application security, testing, observability, and infrastructure design.
@@ -128,11 +137,11 @@ Correctness and security take priority over implementation speed.
 
 ## Related Documents
 
-- [[Security Defaults]] — loopback development bindings and default-disabled registration
+- [Security Defaults](Security%20Defaults.md) — loopback development bindings and default-disabled registration
 
-- [[Development Status]] — current milestone, latest verification, and next steps
-- [[Identity Foundation]] — repository and transactional signup behavior
-- [[Architecture]]
-- [[Security Requirements]]
-- [[Threat Model]]
-- [[Roadmap]]
+- [Development Status](Development%20Status.md) — current milestone, latest verification, and next steps
+- [Identity Foundation](Identity%20Foundation.md) — repository and transactional signup behavior
+- [Architecture](Architecture.md)
+- [Security Requirements](Security%20Requirements.md)
+- [Threat Model](Threat%20Model.md)
+- [Roadmap](Roadmap.md)

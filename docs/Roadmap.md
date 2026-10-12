@@ -3,9 +3,9 @@
 Status: Active
 Version: 0.1
 
-Last updated: 2026-10-10 (Asia/Rangoon)
+Last updated: 2026-10-12 (Asia/Rangoon)
 
-Current implementation progress and verification evidence: [[Development Status]].
+Current implementation progress and verification evidence: [Development Status](Development%20Status.md).
 The roadmap describes full ticket acceptance scope; implemented primitives do not
 by themselves complete an entire registration or security milestone.
 
@@ -101,7 +101,7 @@ Add:
 Status:
 
 Implemented locally — unit and isolated PostgreSQL integration suites are available.
-See [[Development Status]] for current local checks and historical verification evidence.
+See [Development Status](Development%20Status.md) for current local checks and historical verification evidence.
 
 ---
 
@@ -152,9 +152,10 @@ Status:
 
 Implemented — GitHub Actions runs install, lint, build, typecheck, workspace tests,
 PostgreSQL integration, Redis integration and combined HTTP/Redis/PostgreSQL E2E.
-[CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113) completed successfully at PR #7's merge commit
-`216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
-See [[Development Status]] for current and historical evidence.
+[CI #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113)
+validated the historical PR #7 merge; [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)
+validated the reviewed PR #9 merge `d51559cfb3ec614d158ae4dd3b3f63baaefa234b`.
+See [Development Status](Development%20Status.md) for current and historical evidence.
 
 ---
 
@@ -190,7 +191,7 @@ Request ID must propagate to structured logs.
 
 Add structured application logging.
 
-Logs must follow [[Security Requirements]].
+Logs must follow [Security Requirements](Security%20Requirements.md).
 
 ---
 
@@ -264,9 +265,9 @@ Implement:
 
 Requirements:
 
-- [[Security Requirements#SR-001 — Password Storage]]
-- [[Security Requirements#SR-002 — Password Verification]]
-- [[Security Requirements#SR-003 — Password Input Limits]]
+- [Security Requirements#SR-001 — Password Storage](Security%20Requirements.md#sr-001--password-storage)
+- [Security Requirements#SR-002 — Password Verification](Security%20Requirements.md#sr-002--password-verification)
+- [Security Requirements#SR-003 — Password Input Limits](Security%20Requirements.md#sr-003--password-input-limits)
 
 Tests:
 
@@ -304,25 +305,29 @@ Avoid unsafe assumptions about mailbox equivalence.
 
 Implement user registration.
 
-Status: In progress — signup foundation, HTTP boundary, disabled-by-default
-guard, abuse/admission controls, database transaction hardening and transactional
-signup audit storage are integrated into `main` through [PR #7](https://github.com/ryukkfk/authcore/pull/7).
-Post-merge CI passed at `216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
-These development increments do not complete AUTH-001. See [[Identity Foundation]],
-[[Development Status]] and [[Security Defaults]].
+Status: In progress — registration foundation, HTTP boundary, disabled-by-default
+guard, abuse/admission controls, transaction hardening and audit storage merged
+through [PR #7](https://github.com/ryukkfk/authcore/pull/7). Restricted-role
+provisioning merged through [PR #8](https://github.com/ryukkfk/authcore/pull/8).
+[PR #9](https://github.com/ryukkfk/authcore/pull/9) merged an inactive Phase A
+idempotency ledger and crypto foundation. Reviewed `main`:
+`d51559cfb3ec614d158ae4dd3b3f63baaefa234b`, [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)
+successful. These primitives do not complete AUTH-001 or enable public signup.
+See [Identity Foundation](Identity%20Foundation.md), [Development Status](Development%20Status.md) and [Security Defaults](Security%20Defaults.md).
 
 Implemented: signup rejects disabled requests with consistent 403 before DTO validation,
 hashing or writes. Explicit isolated-development enablement preserves email validation,
 12–128-character passwords, generic 202 success/duplicate responses and safe errors.
 
 Next feature work: registration policy, verification-event creation/delivery and
-timing-resistant account-enumeration protection. Rate limiting, admission controls
-and transactional audit storage are implemented. Audit runtime-role protection is
-implemented in [Draft PR #8](https://github.com/ryukkfk/authcore/pull/8), with
-successful CI #17; independent human review is pending and the PR remains unmerged.
-Live runtime-role adoption is not performed; see [[Audit Database Permissions Plan]].
-Retention/account deletion, COMMIT fencing and unknown-outcome reconciliation
-remain unresolved.
+timing-resistant account-enumeration protection. Rate limiting, admission and
+audit storage are implemented. Permission provisioning has merged, but live
+runtime-role adoption and independent security review remain unverified.
+Phase A does **not** include HTTP Idempotency-Key handling, COMMIT-ACK recovery,
+retention cleanup or HMAC rotation; the v1 HMAC secret must remain stable during
+active ledger retention. Account deletion/retention policy, distributed lease
+fencing and production operations are still blocked.
+
 Equal response status/body alone does not establish timing resistance. Registration is
 incomplete and production deployment is not ready.
 
@@ -896,35 +901,31 @@ Next ticket
 
 # Current Position
 
-Current milestone:
+Current milestone: **Phase 2 — Identity and Password Credentials (development-only)**.
 
-**Phase 2 — Identity and Password Credentials: transactional signup audit merged; signup disabled by default**
+**Latest reviewed integrated checkpoint:** [PR #9](https://github.com/ryukkfk/authcore/pull/9)
+merged at `d51559cfb3ec614d158ae4dd3b3f63baaefa234b`;
+[post-merge CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)
+succeeded (workspace 214, PostgreSQL 99, Redis 28, HTTP E2E 9:
+**350 distinct passed tests**, plus lint/build/typecheck).
 
-Current next work:
+**Earlier integrated milestones:** PR #7 transactional audit at `216f4d2b`
+([CI #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113));
+PR #8 restricted runtime database permissions at `d6293312`
+(post-merge CI #19 successful).
+The former PR #8 draft head `98073418567d5f290dc56252b0f928ebed25a6cd`
+passed [CI #17](https://github.com/ryukkfk/authcore/actions/runs/38047352812):
+168 workspace, 55 PostgreSQL, 28 Redis, 9 combined E2E = **260 distinct tests**.
+This is a **historical** candidate checkpoint; the 17 signup PostgreSQL cases
+are already included in its workspace count.
 
-**Current security follow-up: runtime database permission provisioning and
-regressions are implemented on `feat/audit-runtime-permissions` in
-[PR #8](https://github.com/ryukkfk/authcore/pull/8), which remains Draft and unmerged.
-CI passed; independent human review is pending. Live application database
-credentials and permissions have not been changed.** See [[Audit Database Permissions Plan]].
-
-**AUTH-001 — Registration remains in progress:** registration policy, verification
-events and timing resistance remain pending. Existing rate limiting, admission
-controls and transactional audit storage are merged. Other public-launch blockers
-remain recorded in [[Development Status]].
-
-Latest candidate verification: [CI run #17](https://github.com/ryukkfk/authcore/actions/runs/38047352812)
-completed successfully on October 10, 2026 for PR #8 head
-`98073418567d5f290dc56252b0f928ebed25a6cd`. Lint, build and typecheck passed;
-workspace 168, PostgreSQL integration 55, Redis integration 28 and combined
-HTTP/Redis/PostgreSQL E2E 9 passed: **260 distinct tests passed**. The 17 signup
-PostgreSQL cases are already included in workspace tests and are not counted again.
-`SIGNUP_ENABLED=false` remains the source default.
-
-Latest integrated verification: [CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113)
-completed successfully for the PR #7 merge commit
-`216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
-See [[Development Status]] for the owner-recorded development-only review-risk
-exception and separate historical local checks. No independent human review is claimed.
-Public production registration remains blocked. See [[Security Defaults]] for manual
-listener/container checks and remaining public-enablement requirements.
+**AUTH-001 remains incomplete.** The merged Phase A idempotency ledger is inactive
+foundation only: no HTTP idempotency enforcement, COMMIT acknowledgement recovery,
+retention cleanup or HMAC rotation protocol. Registration policy, verification
+and timing resistance are pending. Restricted DB provisioning code does not prove
+actual live role adoption. No independent human security approval is claimed;
+owner-only development risk exceptions are not launch authorization.
+`SIGNUP_ENABLED=false` remains the source default. Production registration,
+deployment and runtime permission changes are not authorized by this note.
+See [Development Status](Development%20Status.md), [Security Defaults](Security%20Defaults.md), [Audit Database Permissions Plan](Audit%20Database%20Permissions%20Plan.md)
+and [Runtime Permissions Checkpoint](Runtime%20Permissions%20Checkpoint.md) for current and dated evidence.

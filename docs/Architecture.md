@@ -1,5 +1,14 @@
 # AuthCore Architecture
 
+Implementation checkpoint (reviewed 2026-10-12): [Development Status](Development%20Status.md) records
+PR #7 transactional audit, PR #8 database permission provisioning, and PR #9
+Phase A signup idempotency foundation merged at `d51559cf`. [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)
+succeeded for that revision. This architecture includes **planned** components;
+HTTP Idempotency-Key enforcement, COMMIT acknowledgement recovery, registration
+policy and verification delivery are not complete. `SIGNUP_ENABLED=false` remains
+the source default. See [Runtime Permissions Checkpoint](Runtime%20Permissions%20Checkpoint.md) for the dated PR #8
+candidate snapshot, not current runtime adoption evidence.
+
 ## Overview
 
 AuthCore is a production-oriented Identity and Access Management platform.
@@ -478,7 +487,7 @@ Sensitive credentials must never be logged.
 ## Deployment Strategy
 
 Current development defaults use loopback API/Compose bindings and a default-disabled
-signup HTTP guard. See [[Security Defaults]]. The diagram and production topology
+signup HTTP guard. See [Security Defaults](Security%20Defaults.md). The diagram and production topology
 below describe the target architecture, not a verified active deployment.
 
 Initial production deployment:
@@ -582,5 +591,5 @@ These may be considered later if justified.
 
 ## Related Security Documents
 
-- [[Security Requirements]]
-- [[Threat Model]]
+- [Security Requirements](Security%20Requirements.md)
+- [Threat Model](Threat%20Model.md)
