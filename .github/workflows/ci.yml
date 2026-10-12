@@ -80,6 +80,27 @@ jobs:
       - name: PostgreSQL integration tests
         run: pnpm --filter @authcore/db test:integration
 
+      - name: S0 real PostgreSQL outcome verification
+        env:
+          S0_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -n "$TEST_DATABASE_URL"
+          test -z "${DATABASE_URL:-}"
+          pnpm --filter @authcore/db test:integration src/signup-commit-outcomes.integration.test.ts --reporter=verbose --reporter=json --outputFile.json=s0-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("packages/db/s0-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 9);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("S0_REAL_VERIFICATION total=9 passed=9 skipped=0");
+          '
+
       - name: Redis integration tests
         run: pnpm --filter @authcore/api test:redis
 

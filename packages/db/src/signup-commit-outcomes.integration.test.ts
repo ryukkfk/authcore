@@ -99,7 +99,8 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     const original = client.query;
     client.query = function (...args: unknown[]) {
       return (Reflect.apply(original, client, args) as Promise<QueryResult>).then((result) => {
-        if (args[0] === 'COMMIT') log.add('owner_COMMIT_query_resolved', result.command);
+        if (args[0] === 'COMMIT' || args[0] === 'ROLLBACK')
+          log.add(`owner_${args[0]}_query_resolved`, result.command);
         return result;
       });
     } as typeof client.query;
@@ -159,6 +160,7 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
       synchronous_commit: 'on',
       recovery: false,
     });
+    expect(settings.rows[0].version).toMatch(/^17\./);
   }, 20_000);
 
   async function closeOwnedTransports() {
@@ -456,6 +458,8 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     const ownerPool = pool();
     const original = await ownerPool.connect();
     const oldPid = (await original.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    captureCommit(original, log);
+    log.add('original_backend_pid', String(oldPid));
     const primary = new Error('S0 deliberate work abort');
     await expect(
       runSignupTransaction(
@@ -467,11 +471,26 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     ).rejects.toBe(primary);
     expect(ownerPool.totalCount).toBe(0);
     expect(ownerPool.idleCount).toBe(0);
+    expect(
+      log.events.find((event) => event.event === 'owner_ROLLBACK_query_resolved')?.detail,
+    ).toBe('ROLLBACK');
     log.add('failed_client_evicted');
+    const observer = await session();
+    const deadline = performance.now() + 3_000;
+    let remaining: number;
+    do {
+      remaining = (
+        await observer.query('SELECT pid FROM pg_stat_activity WHERE pid = $1', [oldPid])
+      ).rowCount!;
+      if (remaining) await new Promise<void>((resolve) => setImmediate(resolve));
+    } while (remaining && performance.now() < deadline);
+    expect(remaining).toBe(0);
+    log.add('server_confirmed_original_backend_absent');
     const next = await ownerPool.connect();
     try {
-      expect((await next.query('SELECT pg_backend_pid() AS pid')).rows[0].pid).not.toBe(oldPid);
-      log.add('fresh_backend_acquired');
+      const nextPid = (await next.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      expect(nextPid).not.toBe(oldPid);
+      log.add('fresh_backend_acquired', String(nextPid));
     } finally {
       next.release();
     }
