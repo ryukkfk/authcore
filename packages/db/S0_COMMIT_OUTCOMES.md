@@ -2,28 +2,45 @@
 
 S0 is test only. Baseline: `a0bd2d7ff6499e393a3dabb46617f6292f23c84e`.
 Design reviewed: PR #11 at `c860496cebc7919f1ad7fb56705db6e15cf57eb7`.
-No D01–D13 approval is inferred. No S1–S6 behavior is implemented.
+No D01â€“D13 approval is inferred. No S1â€“S6 behavior is implemented.
 `SIGNUP_ENABLED=false`; public signup and production readiness remain unapproved.
 
 ## Evidence boundary
 
-No dedicated `TEST_DATABASE_URL` was provided or authorized for this session.
-All real PostgreSQL scenarios are **BLOCKED — dedicated TEST_DATABASE_URL unavailable**.
+The owner explicitly authorized the existing disposable PostgreSQL 17 GitHub
+Actions service for this S0 verification. Local and production database execution
+remain prohibited. Historical CI #25 at `1eb79a50bf55b1d8f1691de7399a3605048d37f3`
+passed ordinary integration checks but skipped all nine S0 cases because the
+explicit S0 approval flag was absent. It is not real S0 evidence.
+The dedicated CI verification step now enables only its focused S0 invocation;
+CI [#26](https://github.com/ryukkfk/authcore/actions/runs/38221444767) at
+`31f7387d52d8465cea3d3c9577be6dd40ab9c5f5` executed **9/9 real S0 cases, zero
+skips**, with the result check `S0_REAL_VERIFICATION total=9 passed=9 skipped=0`.
+The complete Verify job logs were inspected, including all nine scenario traces,
+settings, before/after inventories and existing regression suites.
 Synthetic unit tests characterize the actual owner function; synthetic TCP peers
 exercise the proxy. Neither establishes a PostgreSQL transaction's durable outcome.
 Skipped integration cases are not passes. Historical PR #11 CI is baseline evidence only.
 
-| Scenario                               | Real PostgreSQL status | Available deterministic evidence / remaining oracle                                                                                                                                                                 |
-| -------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S0-01 committed COMMIT, lost ACK       | BLOCKED                | Simulated COMMIT rejection is preserved and connection evicted. Real proof requires complete server `CommandComplete(COMMIT)` withheld by proxy and a new independent connection observing the marker.              |
-| S0-02 definite abort                   | BLOCKED                | Fixture requires server `22012 ERROR`, acknowledged `ROLLBACK`, then absent marker. No server SQLSTATE/tag was observed in this session.                                                                            |
-| S0-03 COMMIT returns ROLLBACK          | BLOCKED                | **KNOWN GAP in owner, unit characterization:** resolved `ROLLBACK` command is accepted as work success. Real aborted-transaction fixture awaits execution.                                                          |
-| S0-04 post-COMMIT release failure      | BLOCKED                | **KNOWN GAP in owner, unit characterization:** acknowledged mock COMMIT followed by release throw rejects the caller. Real witness and real pool checkout-retention assertion await execution.                      |
-| S0-05 independent reservation ACK loss | BLOCKED                | Manual Phase A repository fixture exists; identity, binding, immutable expiry, conflict and later independent rollback assertions await PostgreSQL. No Phase B T1 service exists.                                   |
-| S0-06 fresh read / lock ordering       | BLOCKED                | Real two-writer schedules and negative same-statement join fixture exist. No MVCC schedule was executed here.                                                                                                       |
-| S0-07 teardown / ownership             | BLOCKED                | Unit tests cover deadline eviction, delayed COMMIT settlement, late acquisition and end completion; existing real-pool/synthetic-client test covers reuse/eviction. Real backend PID/reuse oracle awaits execution. |
+Observed server: PostgreSQL **17.11**, `fsync=on`, `synchronous_commit=on`, primary
+mode. Before/after inventories matched exactly: four databases, sixteen roles,
+four anchor schemas and zero owned sessions. The UUID-owned database was removed
+without FORCE. Full CI passed lint, build, typecheck, 233 workspace tests, 99
+ordinary PostgreSQL tests, 28 Redis integration tests and nine HTTP E2E tests.
+The ordinary PostgreSQL invocation's nine S0 skips are separate from the dedicated
+invocation's nine passes. No runtime code, migrations, grants or dependencies changed.
 
-`KNOWN GAP` unit assertions intentionally pass when unsafe current behavior is
+| Scenario                               | Real PostgreSQL status | Available deterministic evidence / remaining oracle                                                                                                                                                                                        |
+| -------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S0-01 committed COMMIT, lost ACK       | PASS                   | Complete server `CommandComplete(COMMIT)` observed, entire ACK withheld by proxy, owner rejected; newly opened independent connection observed committed marker. Pool total/idle counts both zero.                                         |
+| S0-02 definite abort                   | PASS                   | Real server `22012 ERROR`, acknowledged `ROLLBACK`, independent marker absent.                                                                                                                                                             |
+| S0-03 COMMIT returns ROLLBACK          | PASS / KNOWN GAP       | Real aborted transaction returned `ROLLBACK` from COMMIT; current owner returned false success while independent marker was absent. Unsafe behavior remains unfixed.                                                                       |
+| S0-04 post-COMMIT release failure      | PASS / KNOWN GAP       | Actual acknowledged `COMMIT`, then synthetic release-boundary exception; caller rejected despite independent committed marker. Real pool retained one checkout, explicitly evicted by fixture.                                             |
+| S0-05 independent reservation ACK loss | PASS                   | Complete real COMMIT ACK withheld; new connection matched claim identity, binding and expiry. No rebinding/renewal; conflicting payload rejected; later rollback preserved independent reservation. Manual repository building block only. |
+| S0-06 fresh read / lock ordering       | PASS (3 cases)         | `pg_blocking_pids` barrier verified real row-lock waits. Writer COMMIT -> fresh accepted result; writer ROLLBACK -> absent result; same-statement JOIN missed committed result that a separate statement saw.                              |
+| S0-07 teardown / ownership             | PASS                   | Real ROLLBACK tag, failed checkout evicted, original backend absent in `pg_stat_activity`, next checkout had a different PID. Acquisition/COMMIT deadline gaps remain unit/synthetic evidence only.                                        |
+
+`KNOWN GAP` characterization assertions intentionally pass when unsafe current behavior is
 observed. They do not endorse it. Desired S1 behavior is described separately;
 there are no suppressed failures or silently passing future-behavior regressions.
 
@@ -40,7 +57,7 @@ there are no suppressed failures or silently passing future-behavior regressions
   This is essential because helpers live beside tests under the existing TypeScript root.
   No runtime source, schema, migration, permission SQL or service configuration changes.
 
-## Fault methodology and ordering (not yet observed against PostgreSQL)
+## Fault methodology and ordering
 
 The proxy listens only on loopback with a random port, forwards protocol v3 startup
 and all typed frames, and supports plaintext test transport only (`ssl: false`).
@@ -113,7 +130,7 @@ primary SQLSTATE precedence, rollback failure, failed-client eviction and real
 pg-pool lifecycle using a synthetic client. Those are not real PostgreSQL evidence.
 
 The real fixture captures database/role/schema and owned-session inventories before
-and after, creates only `s0_outcomes_<uuid>` in the approved isolated local cluster,
+and after, creates only `s0_outcomes_<uuid>` in the approved ephemeral CI cluster,
 applies existing migrations only there, and creates one owned marker table. It
 creates no roles, alters no runtime grants, deletes no shared rows and never uses
 DROP FORCE. It awaits owned proxy/socket/client/pool closure and server-session
@@ -123,51 +140,47 @@ The harness watchdog is not a runtime outcome classifier or an ownership guarant
 If closure cannot settle, the test fails and must report retained resource names;
 never erase an error or terminate an unrelated backend to obtain green results.
 
-## Secure later execution — separate environment approval required
+## Authorized CI execution
 
-Do not execute these steps in an application or production environment. An operator
-must separately approve/provide an isolated local PostgreSQL cluster containing the
-dedicated `authcore_test` anchor, and a test-only login authorized to create/drop
-disposable test databases. Do not grant these capabilities to the application role.
-Creating/installing a cluster, service, container or role is outside this S0 session.
+Only the existing GitHub-hosted ephemeral CI service is approved for this task.
+The workflow retains its existing `TEST_DATABASE_URL`; no application credentials,
+repository secrets, new services or fallback connections are introduced. The S0
+step alone sets `S0_POSTGRES_APPROVED=true` and `SIGNUP_ENABLED=false`, requires a
+GitHub-hosted Actions runner and a nonempty dedicated URL, and refuses a supplied
+`DATABASE_URL`. The existing URL guard, durability settings and PostgreSQL 17 major
+version assertion run before the cases. Invalid prerequisites fail the step.
 
-Supply the dedicated URL through a session-local secure prompt; never paste it in
-Git, a PR, shell history or application `.env`. The harness accepts only `postgres:`
-or `postgresql:`, `localhost`/`127.0.0.1`, port 5432, database `authcore_test`, no query
-options or fragments, and refuses exact reuse of `DATABASE_URL`. No fallback exists.
+The command uses the existing `@authcore/db test:integration` package script and
+checked-in integration configuration, filtered to the S0 file. Verbose evidence
+and a JSON reporter are enabled. An independent result check requires exactly
+nine passed assertions; a missing, skipped, pending or failed case fails CI.
+Ordinary PostgreSQL integration, Redis, HTTP E2E, lint, build, typecheck and unit
+coverage are preserved. S0 skips in the ordinary invocation are expected because
+that invocation does not receive approval; only the dedicated invocation counts.
 
-```powershell
-# Run only after separate isolated-environment approval. No credentials are echoed.
-$s0SecureUrl = Read-Host 'Dedicated approved TEST_DATABASE_URL' -AsSecureString
-$s0Pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s0SecureUrl)
-try {
-  $env:TEST_DATABASE_URL = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($s0Pointer)
-  $env:S0_POSTGRES_APPROVED = 'true'
-  $env:SIGNUP_ENABLED = 'false'
-  pnpm.cmd --filter @authcore/db exec vitest run --config vitest.integration.config.ts src/signup-commit-outcomes.integration.test.ts
-} finally {
-  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($s0Pointer)
-  Remove-Item Env:TEST_DATABASE_URL -ErrorAction SilentlyContinue
-  Remove-Item Env:S0_POSTGRES_APPROVED -ErrorAction SilentlyContinue
-  $s0SecureUrl.Dispose()
-}
-```
+The cleanup guard closes owned transports, checks owned backend absence, drops
+only the exact UUID database created by this invocation without FORCE, and compares
+before/after database, role, schema and owned-session inventories. S0-07 additionally
+checks the evicted backend's absence through `pg_stat_activity` before acquiring a
+different backend. No unrelated session is terminated.
 
-Use an otherwise clean shell with application credentials absent. This explicit
-opt-in gates only the new S0 suite; existing integration suites retain their existing
-guards and are not modified. Archive full stdout/stderr, commit SHA, settings,
-event traces, command tags, inventories and cleanup result privately. A blocked or
-skipped case must not be counted as passed. If Device Guard or prerequisites block
-execution, stop and record the exact blocker; do not bypass machine policy.
+Archive revision, run URL, settings, event traces, command tags, inventories and
+cleanup results privately, with connection strings and credentials redacted.
+No local PostgreSQL execution or Device Guard change is needed or authorized.
 
 ## S1 readiness and outstanding design corrections
 
-S1 needs separate implementation approval and D06 approval. S0 unit findings support
+S1 needs separate implementation approval and D06 approval. S0 findings support
 the necessity of typed phase/outcome classification, strict `COMMIT` versus `ROLLBACK`
 tag checking, a proven-success latch, frozen primary error precedence, bounded
 acquisition/transaction ownership, late-client disposal and failed-client eviction.
 They do not validate a proposed S1 implementation. Real ACK-loss, MVCC and backend
-cleanup evidence remains blocked, so S0 cannot satisfy the full S1 acceptance gate.
+cleanup characterization is now verified in CI #26. S0 satisfies its test-only
+characterization acceptance criteria; this does not mean the transaction owner is
+safe or authorize S1. No additional production-owner defect beyond the documented
+gaps was discovered. S1 remains blocked on D06 correction/approval and separate
+implementation authorization. The real fixtures do not validate owner acquisition
+or stalled-COMMIT deadlines, crash/power-loss/failover durability, or future HTTP recovery.
 
 - **P1 / D04:** timestamp-only expiry is not permanently monotonic under backward
   database-clock movement. Resolve policy/design before S2; no expiry policy is added here.
@@ -177,7 +190,7 @@ cleanup evidence remains blocked, so S0 cannot satisfy the full S1 acceptance ga
   S1/S4 implementation; S0 does not fix it.
 - **P2 / scope:** Phase B HTTP replay and T1/T2/T3 orchestration do not exist. These
   owner/repository/transport tests must never be reported as future HTTP behavior passing.
-- D01–D13 remain pending owner decisions. PR #11 stays open and Draft, unmodified.
+- D01â€“D13 remain pending owner decisions. PR #11 stays open and Draft, unmodified.
 
 Unknown COMMIT cannot be made definite by cleanup or a new ROLLBACK. Independent
 positive state can prove success; lock/fresh lookup provides protocol synchronization,
