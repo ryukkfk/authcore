@@ -1,6 +1,6 @@
 # Development Security Defaults
 
-Last updated: 2026-10-10 (Asia/Rangoon)
+Last updated: 2026-10-12 (Asia/Rangoon)
 
 ## Merge scope
 
@@ -8,9 +8,12 @@ The signup foundation is development-only code. Public registration is disabled 
 default in every NODE_ENV. These defaults support merging the foundation; they do
 not make registration ready for public production use.
 
-PR #7 is merged and post-merge CI passed. The owner-recorded development-only
-review-risk exception does not authorize deployment or public registration.
-See [[Development Status]] for the exact revision and evidence. This documentation
+PRs #7 (audit), #8 (database permissions), and #9 (inactive idempotency
+foundation) are merged at the reviewed revision `d51559cf` with successful
+[CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583).
+The owner-recorded development-only review-risk exceptions are not independent
+human security approval or authorization for deployment/public registration.
+See [Development Status](Development%20Status.md) for the exact revision and evidence. This documentation
 update does not change actual environment values, containers or runtime roles.
 
 ## Configuration
@@ -74,16 +77,17 @@ and send a synthetic signup request with the flag absent/false: expect the disab
 403 response. Check from another LAN host when proving network isolation. Local
 listener snapshots alone do not prove internet accessibility or its absence.
 
-## Runtime database permissions candidate
+## Merged runtime database permission artifact — deployment not established
 
-An isolated development candidate adds explicit provisioning for a dedicated
-SELECT/INSERT runtime login and tests denied audit mutation, DDL/escalation and
-mandatory-audit failure rollback. The existing ORM requires INSERT privileges on
-defaulted columns too, so direct SQL writers can choose values on newly appended
-events; this does not make history tamper-evident.
-No actual runtime credentials or roles have been switched. See
-[runtime permissions](../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md),
-[[Audit Database Permissions Plan]] and [[Development Status]].
+PR #8 merged operator-invoked provisioning for a dedicated restricted runtime
+login; PR #9 extended it to five signup tables and permitted UPDATE only on the
+idempotency claim's inert, CHECK-constrained `lock_anchor` column. Audit history
+UPDATE/DELETE/TRUNCATE remains denied to the restricted principal. Existing ORM
+INSERT behavior allows direct writers to choose values on new audit rows, so
+this is not tamper-evident storage. Tests establish the permission model in
+isolated databases, not adoption by live credentials/roles.
+See [runtime permissions](../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md),
+[Audit Database Permissions Plan](Audit%20Database%20Permissions%20Plan.md) and [Development Status](Development%20Status.md).
 
 ## Public enablement remains blocked
 
@@ -95,7 +99,7 @@ Before public enablement, complete and review registration policy, email ownersh
 verification/delivery and unverified-account access restrictions, timing-resistant
 enumeration defenses, review and authorized adoption of runtime-role protection,
 retention/account-deletion
-policy, COMMIT fencing and uncertain-outcome reconciliation, operational/capacity
+policy, HTTP idempotency, COMMIT fencing and uncertain-outcome reconciliation, operational/capacity
 validation, and controlled TLS/network exposure.
-See [[Audit Database Permissions Plan]], [[Identity Foundation]],
-[[Development Status]] and [[Roadmap]].
+See [Audit Database Permissions Plan](Audit%20Database%20Permissions%20Plan.md), [Identity Foundation](Identity%20Foundation.md),
+[Development Status](Development%20Status.md) and [Roadmap](Roadmap.md).

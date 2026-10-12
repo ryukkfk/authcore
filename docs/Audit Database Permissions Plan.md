@@ -2,18 +2,31 @@
 
 Prepared: 2026-10-10 (Asia/Rangoon)
 
-Status: Implemented and locally tested on `feat/audit-runtime-permissions`;
-not merged or applied to live runtime roles.
-See [[Development Status]], [[Identity Foundation]], [[Roadmap]] and [[Security Defaults]].
+Documentation reconciliation: 2026-10-12 (Asia/Rangoon).
 
-## Verified starting point
+Status: The restricted runtime database permission artifact merged through
+[PR #8](https://github.com/ryukkfk/authcore/pull/8)
+(`d6293312a00f75318f107f1caf69ec5db8141289`).
+[PR #9](https://github.com/ryukkfk/authcore/pull/9) subsequently extended
+provisioning for two Phase A idempotency tables. The reviewed integrated
+revision is `d51559cfb3ec614d158ae4dd3b3f63baaefa234b`, with successful
+[CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583).
+This plan's PR #7 starting point and PR #8 260-test candidate evidence below
+are **dated historical records**, not a description of current merge state.
+Merged implementation and CI do not establish live-role adoption or independent
+human security approval. `SIGNUP_ENABLED=false` stays the source default;
+public signup and production deployment remain blocked.
+See [Development Status](Development%20Status.md), [Identity Foundation](Identity%20Foundation.md), [Roadmap](Roadmap.md),
+[Security Defaults](Security%20Defaults.md) and [Runtime Permissions Checkpoint](Runtime%20Permissions%20Checkpoint.md).
+
+## Historical starting point — PR #7
 
 - PR #7 merged into `main` with merge commit `216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
 - The merged tree matches submitted head `a2999cc87969aba161cab8316c6cb28ab7bc4ae8` (tree `4d5bdc616db91b9234f518d86a7b821ada8a23bf`).
 - Post-merge CI run #16, run ID `38044394113`, completed successfully. Lint, build, typecheck, workspace tests, PostgreSQL integration, Redis integration and combined HTTP/Redis/PostgreSQL E2E steps all completed successfully.
 - The registration environment schema still defaults `SIGNUP_ENABLED` to false.
 - PR #7 has an owner-recorded development-only review-risk exception. It is not independent human security approval or production approval.
-- The repository has no open GitHub issues returned by the current issue search.
+- An issue search on 2026-10-10 returned no open GitHub issues; this is a dated snapshot, not a current-state claim.
 
 Evidence:
 
@@ -21,11 +34,15 @@ Evidence:
 - [Post-merge CI](https://github.com/ryukkfk/authcore/actions/runs/38044394113)
 - [Owner risk exception](https://github.com/ryukkfk/authcore/pull/7#issuecomment-6096463245)
 
-## Current slice: audit runtime database permissions
+## Historical PR #8 slice: audit runtime database permissions
 
 Goal: provide a narrowly scoped runtime privilege configuration and prove that the application can append a signup audit event while being unable to alter or remove existing audit history.
 
-Reason for sequencing: transactional audit storage has landed, but its documentation explicitly says database-enforced append-only protection is absent. The source uses `DATABASE_URL` for both runtime connections and migrations and defines no separate restricted runtime role. Compose's bootstrap PostgreSQL role is not evidence of a restricted application role. Actual deployed database roles and credentials were not inspected.
+Historical reason for sequencing at the PR #7 baseline: transactional audit storage
+had landed without database-enforced append-only protection for a dedicated
+runtime role. At that point `DATABASE_URL` served both runtime connections and
+migrations. Compose's bootstrap PostgreSQL role was not evidence of a restricted
+application principal. Deployed database roles and credentials were not inspected.
 
 The existing roadmap names registration policy and verification events as the next AUTH-001 feature work. Audit privilege hardening is a recommended security follow-up before adding that feature; it does not complete AUTH-001 or waive the other launch blockers.
 
@@ -71,11 +88,12 @@ against a no-op baseline before enforcement. Local validation passed lint, build
 typecheck and 260 distinct tests: workspace 168, PostgreSQL 55 (30 permission
 cases), Redis 28 and combined E2E 9. There were no skips in these suites, and
 database/role inventories matched before and after each local database suite.
-See [[Development Status]] and
+See [Development Status](Development%20Status.md) and
 [Signup runtime permissions](../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md).
-The runtime credential rollout and independent human review have not occurred.
+No live runtime credential rollout or independent human review was evidenced at
+that candidate checkpoint; subsequent merged code/CI do not establish either.
 
-## Documentation checkpoint
+## Historical documentation checkpoint
 
 This documentation refresh replaces stale uncommitted/CI-pending assertions with the merged PR #7 checkpoint and post-merge CI evidence. Development Status, Identity Foundation, Roadmap, Security Defaults and the linked transactional audit note are updated together. Old local verification counts remain attributed to the user, and dated historical checkpoints are preserved. That earlier documentation-only refresh did not rerun application tests. The
 subsequent implementation checkpoint above records fresh local test execution.
@@ -84,7 +102,7 @@ subsequent implementation checkpoint above records fresh local test execution.
 
 Keep `SIGNUP_ENABLED=false`. Do not deploy, alter production settings, change actual credentials/roles or environment files, recreate containers, or run migrations against existing application databases.
 
-Restricted runtime privileges do not prevent a database owner or superuser from changing audit history and do not make storage tamper-evident. Audit retention/account deletion, Redis-to-PostgreSQL COMMIT fencing, unknown COMMIT reconciliation/idempotency, registration policy, verification delivery and timing-resistant enumeration protection remain separate work.
+Restricted runtime privileges do not prevent a database owner or superuser from changing audit history and do not make storage tamper-evident. Audit retention/account deletion, Redis-to-PostgreSQL COMMIT fencing, unknown COMMIT reconciliation and HTTP idempotency enforcement, registration policy, verification delivery and timing-resistant enumeration protection remain separate work.
 
 PostgreSQL references used for the design:
 

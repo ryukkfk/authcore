@@ -1,23 +1,23 @@
 # Identity foundation repository
 
-Last updated: 2026-10-10 (Asia/Rangoon)
+Last updated: 2026-10-12 (Asia/Rangoon)
 
-Status: transactional signup audit is merged into GitHub `main` through
-[PR #7](https://github.com/ryukkfk/authcore/pull/7), merge commit
-`216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
-[CI run #16](https://github.com/ryukkfk/authcore/actions/runs/38044394113) completed successfully, including PostgreSQL, Redis and HTTP E2E.
-See [[Development Status]] for exact head, CI and development-only review-risk
-exception evidence. The foundation's earlier branch and Draft PR #4 checkpoint
-are historical.
-AUTH-001 — Registration remains in progress.
-The HTTP endpoint is disabled by default; see [[Security Defaults]].
-See [[Development Status]] for the verification checkpoint and remaining work.
+The reviewed implementation baseline is `d51559cfb3ec614d158ae4dd3b3f63baaefa234b`
+(PR #9). Transactional audit (PR #7), restricted-runtime permission provisioning
+(PR #8), and Phase A signup idempotency ledger foundations (PR #9) are merged.
+[CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)
+succeeded for that revision; see [Development Status](Development%20Status.md) for counts and historical
+PR evidence. Earlier foundation/Draft PR #4 and PR #8 candidate checkpoints are
+historical. The HTTP signup boundary stays disabled by default
+(`SIGNUP_ENABLED=false`); AUTH-001 remains in progress.
 
-A separate development candidate on `feat/audit-runtime-permissions` now adds
-explicit runtime-role provisioning and permission regressions. Its nine combined
-E2E cases use genuinely restricted logins. It is locally tested, not merged or
-applied to live roles. See [runtime permissions](../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md)
-and [[Development Status]] for evidence and operating boundaries.
+The runtime permission artifact was tested with genuinely restricted logins and
+now covers five signup tables including the Phase A ledger. It has **not** been
+shown to be adopted by any live application role. No independent human security
+approval or tamper-evidence guarantee is claimed. Phase A does not implement
+HTTP idempotency or uncertain COMMIT result recovery. See
+[runtime permissions](../packages/db/SIGNUP_RUNTIME_PERMISSIONS.md) and
+[Runtime Permissions Checkpoint](Runtime%20Permissions%20Checkpoint.md) (dated historical snapshot).
 
 The first durable signup audit slice is described in
 [Signup transactional security audit](../apps/api/SIGNUP_TRANSACTIONAL_AUDIT.md),
@@ -159,21 +159,21 @@ constructor type metadata (the development runner's behavior).
 CI builds workspace packages before typechecking and testing because dependent
 packages resolve their public entrypoints from `dist`.
 
-## Next work — audit permissions proposal and registration features
+## Next work — registration features and operational security
 
-[[Audit Database Permissions Plan]] records the runtime-role separation and
-permission-denial regressions in [PR #8](https://github.com/ryukkfk/authcore/pull/8),
-which remains Draft and unmerged. Head `98073418567d5f290dc56252b0f928ebed25a6cd`
-passed [CI #17](https://github.com/ryukkfk/authcore/actions/runs/38047352812) on
-October 10, 2026; see [[Development Status]] for the 260-test breakdown.
-Independent human review and any separately authorized runtime-role adoption
-remain pending. Live application database credentials and permissions have not
-been changed. [[Roadmap#AUTH-001 — Registration]] remains in progress.
-Registration policy and verification-event creation/delivery remain pending. Existing signup rate limiting and
-admission controls remain in place. Timing-resistant account-enumeration protection,
-transactional outbox delivery and the audit/COMMIT limitations above remain pending.
+Runtime permission provisioning merged in [PR #8](https://github.com/ryukkfk/authcore/pull/8)
+and was extended for the ledger by [PR #9](https://github.com/ryukkfk/authcore/pull/9).
+The exact historical PR #8 candidate head and its
+[CI #17](https://github.com/ryukkfk/authcore/actions/runs/38047352812)
+remain recorded in [Runtime Permissions Checkpoint](Runtime%20Permissions%20Checkpoint.md) and [Development Status](Development%20Status.md).
+Independent human security review and separately authorized live runtime-role
+adoption remain outstanding. [Roadmap#AUTH-001 — Registration](Roadmap.md#auth-001--registration) remains in
+progress: registration policy, verification-event creation/delivery, and
+timing-resistant account-enumeration protection remain pending. HTTP
+Idempotency-Key enforcement, uncertain COMMIT reconciliation, retention policy,
+transactional outbox delivery and operational readiness remain separate work.
 Production deployment is not ready.
-API-004 remains [[Roadmap#API-004 — Global Error Handling]]; signup work belongs to AUTH-001.
+API-004 remains [Roadmap#API-004 — Global Error Handling](Roadmap.md#api-004--global-error-handling); signup work belongs to AUTH-001.
 
 ## Historical verification — 2026-10-08
 
@@ -181,6 +181,6 @@ The historical pre-hardening checkpoint recorded API 33/33 and DB integration 14
 The October 8 hardening working tree passed build, typecheck, lint, 78 workspace tests
 (config 24, crypto 5, DB unit 5, API 44) and 14 separate DB integration tests: 92
 distinct tests, no skips. API 44 includes the 4 PostgreSQL signup tests. See
-[[Development Status]] for execution evidence and [[Security Defaults]] for remaining
+[Development Status](Development%20Status.md) for execution evidence and [Security Defaults](Security%20Defaults.md) for remaining
 runtime checks. These historical local results do not describe the current test
 totals or update remote PR CI; no push was performed at that checkpoint.

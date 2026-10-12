@@ -1,5 +1,13 @@
 # AuthCore Threat Model
 
+Implementation checkpoint (2026-10-12): this model includes **planned** controls.
+PR #7 implemented transactional signup audit, PR #8 merged restricted-role
+provisioning, and PR #9 merged inactive Phase A idempotency ledger primitives.
+The reviewed `main` revision `d51559cf` passed [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583).
+Public signup remains disabled by default; full registration and security
+review are incomplete. See [Development Status](Development%20Status.md) and the historical
+[Runtime Permissions Checkpoint](Runtime%20Permissions%20Checkpoint.md).
+
 Status: Active
 Version: 0.1
 
@@ -674,6 +682,15 @@ Controls:
 - database permissions
 - append-oriented design
 - later integrity chaining/export
+
+Current implementation boundary: restricted-role provisioning merged in PR #8
+and expanded for two Phase A idempotency tables in PR #9. Tests reject mutation
+of existing audit rows by that restricted principal, but database owners and
+superusers retain broader powers; direct INSERT may control new event values.
+No integrity chaining/export, tamper-evidence guarantee or live-role adoption is
+established. Phase A does not implement HTTP Idempotency-Key enforcement,
+uncertain COMMIT result recovery or a live HMAC rotation protocol. Retention and
+account-deletion policies remain unresolved. See [Development Status](Development%20Status.md).
 
 ---
 

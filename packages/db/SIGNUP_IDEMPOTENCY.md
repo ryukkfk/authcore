@@ -1,5 +1,13 @@
 # Signup idempotency foundation — Phase A
 
+Integration checkpoint (2026-10-12): [PR #9](https://github.com/ryukkfk/authcore/pull/9)
+merged at `d51559cfb3ec614d158ae4dd3b3f63baaefa234b`.
+[Post-merge CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)
+passed lint, build, typecheck and 350 distinct tests (workspace 214, PostgreSQL 99,
+Redis 28, HTTP E2E 9). The local blocked/partial runs below are historical records,
+not the final integrated CI outcome. No live runtime-role adoption is established.
+See [Development Status](../../docs/Development%20Status.md) for milestones.
+
 This slice is inactive persistence/crypto infrastructure. It does not change HTTP
 headers, signup guards, SignupService, transaction ownership, Redis admission,
 or `SIGNUP_ENABLED=false`. It does not implement COMMIT acknowledgement recovery.
@@ -170,7 +178,7 @@ combined user/credential/audit/result rollback. Existing HTTP E2E stays unchange
 requires isolated Redis on port 6380. Missing infrastructure must be reported as
 blocked/skipped, never counted as PostgreSQL verification.
 
-## Local verification record — 2026-10-10
+## Historical local verification record — 2026-10-10
 
 Branch `feat/signup-idempotency-foundation` started clean at
 `d6293312a00f75318f107f1caf69ec5db8141289`. No commits, pushes, live migrations,
@@ -199,10 +207,10 @@ are blocked PostgreSQL tests, not passes; E2E is an additional blocked suite.
 The Redis URL was explicitly set to `redis://127.0.0.1:6380` in the test process.
 A separate TCP probe returned ECONNREFUSED. No attempt was made to start/change
 Redis/Docker or use development Redis. No PostgreSQL credentials were guessed or
-read from application `.env`. PostgreSQL constraints/permissions/concurrency and
-HTTP E2E remain unverified against a live isolated server.
+read from application `.env`. At that historical local checkpoint, PostgreSQL constraints/permissions/concurrency
+and HTTP E2E were unverified against a live isolated server; CI #21 above is later evidence.
 
-## P2 expiry correction verification — 2026-10-10
+## Historical P2 expiry correction verification — 2026-10-10
 
 The correction changes only the claim repository, its domain-error exports, unit
 and restricted-runtime integration tests, and this document. No schema, migration,
@@ -234,9 +242,8 @@ Correction files: `src/repositories/signup-idempotency.repository.ts`,
 Distinct latest executed passes: 225 (197 workspace + 28 Redis), without counting
 the focused run again. The 116 skipped cases (17 + 99) are BLOCKED, plus the E2E
 setup suite. Earlier user-reported PostgreSQL/E2E successes predate this correction
-and do not verify the new concurrency/expiry regressions. Run the secure PowerShell
-commands below with explicit isolated PostgreSQL configuration before asserting
-PostgreSQL verification or merge readiness. Every verification command used
+and do not verify the new concurrency/expiry regressions. Those local blockers were subsequently resolved by the integrated CI #21 run
+recorded above; future local reruns must still supply explicit isolated PostgreSQL configuration. Every verification command used
 process-local `SIGNUP_ENABLED=false`; no environment files or live roles changed.
 
 ## Secure Windows PowerShell rerun
@@ -254,7 +261,7 @@ passfile must cover the suite's random database names as well as `authcore_test`
 Replace only the non-secret username and existing passfile path in this example:
 
 ```powershell
-Set-Location -LiteralPath 'C:\Users\Tin Aung Cho\authcore-main'
+# Run from the root of the reviewed AuthCore checkout.
 $env:SIGNUP_ENABLED = 'false'
 $env:PGPASSFILE = 'C:\path\to\existing-protected-test.pgpass'
 $env:TEST_DATABASE_URL = 'postgresql://TEST_ADMIN@127.0.0.1:5432/authcore_test'
@@ -271,8 +278,8 @@ credentials or development Redis. These suites create/delete only their UUID-own
 test databases/roles and Redis namespaces. They do not adopt live runtime grants.
 No real HMAC secret is required for Phase A tests: crypto tests generate ephemeral
 32-byte keys. Managed runtime secret injection and cross-version rotation remain
-Phase B decisions. The ledger is ready for source review, not a declaration that
-PostgreSQL verification or COMMIT recovery is complete.
+Phase B decisions. The merged ledger has CI verification; that evidence does not establish COMMIT
+recovery, live credential adoption or production readiness.
 
 References: [PostgreSQL SELECT locking privileges](https://www.postgresql.org/docs/17/sql-select.html),
 [PostgreSQL privileges](https://www.postgresql.org/docs/17/ddl-priv.html),

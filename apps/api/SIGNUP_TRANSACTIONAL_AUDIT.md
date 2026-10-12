@@ -1,5 +1,14 @@
 # Signup transactional security audit
 
+Current integration checkpoint (2026-10-12): PR #7 merged the audit, PR #8
+merged restricted-role permission provisioning, and PR #9 merged the Phase A
+signup idempotency persistence/crypto foundation. The reviewed `main` revision
+is `d51559cfb3ec614d158ae4dd3b3f63baaefa234b`; [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)
+succeeded for that revision. The audit slice below does **not** implement HTTP
+Idempotency-Key handling, uncertain COMMIT outcome recovery, or tamper evidence.
+See [Development Status](../../docs/Development%20Status.md) and [Runtime Permissions Checkpoint](../../docs/Runtime%20Permissions%20Checkpoint.md) for current and
+historical evidence. Signup remains disabled by default (`SIGNUP_ENABLED=false`).
+
 This slice adds durable PostgreSQL auditing to `SignupService` only. Signup stays
 disabled by default (`SIGNUP_ENABLED=false`). AUTH-001 remains incomplete and
 AUTH-002 — Login stays in the roadmap. This slice does not change admission slots
@@ -74,7 +83,7 @@ The existing post-commit `identity.user_created` operational log is preserved.
 `security_audit_events` is the durable source of truth; operational logs are
 neither proof of transaction durability nor required for the event to exist.
 
-## Integrated checkpoint — 2026-10-10
+## Historical PR #7 integrated checkpoint — 2026-10-10
 
 [PR #7](https://github.com/ryukkfk/authcore/pull/7) is merged into `main` at
 `216f4d2b8b00e813c4d580ca98b3a17cfb309181`.
@@ -89,9 +98,9 @@ It is not independent human security approval or a waiver of public-launch
 blockers. Signup remains disabled by default; no deployment or production-setting
 change was performed. See [Development Status](../../docs/Development%20Status.md)
 and the [audit permissions implementation plan](../../docs/Audit%20Database%20Permissions%20Plan.md).
-The subsequent permissions candidate is locally implemented and tested in a
-separate branch, not merged or applied to live roles. See Development Status for
-its 260-test local checkpoint, distinct from the PR #7 CI evidence above.
+The later permission changes merged in PR #8 and were extended for the Phase A
+ledger in PR #9. The earlier 260-test PR #8 candidate checkpoint remains historical,
+not a rerun against PR #9. No live runtime-role adoption has been verified.
 
 ## Verification
 
@@ -159,7 +168,7 @@ flush Redis. No commands below create/reconfigure containers or change `.env`.
 From a normal, non-elevated PowerShell session:
 
 ```powershell
-Set-Location 'C:\Users\Tin Aung Cho\authcore'
+# Run from the root of the reviewed AuthCore checkout.
 $env:SIGNUP_ENABLED = 'false'
 git branch --show-current
 git rev-parse main

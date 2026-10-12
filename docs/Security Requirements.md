@@ -1,5 +1,13 @@
 # AuthCore Security Requirements
 
+Implementation checkpoint (2026-10-12): [Development Status](Development%20Status.md) documents PR #7,
+PR #8 and PR #9 integrated at the reviewed `d51559cf` revision and successful
+[CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583).
+This document states **requirements**, not proof of their complete implementation.
+AUTH-001, independent security review, production readiness and live DB-role
+adoption remain outstanding; `SIGNUP_ENABLED=false` is the source default.
+Historical permission candidate evidence: [Runtime Permissions Checkpoint](Runtime%20Permissions%20Checkpoint.md).
+
 Status: Active
 Version: 0.1
 
@@ -628,14 +636,18 @@ Previously fixed vulnerabilities must not be allowed to silently return.
 
 Changes should not be considered complete until required verification passes.
 
-Minimum checks will eventually include:
+Current required CI for the implemented signup increment includes:
 
-- linting
+- linting and build
 - type checking
-- unit tests
-- integration tests
-- relevant end-to-end tests
+- workspace unit/service tests
+- PostgreSQL integration tests
+- dedicated Redis integration tests
+- combined HTTP/Redis/PostgreSQL end-to-end tests
 
+[CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)
+passed these suites for reviewed merge `d51559cf`. Passing CI is not
+independent human security review or evidence that every SR requirement is met.
 Security scanning will be added as the project matures.
 
 ---

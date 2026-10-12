@@ -1,5 +1,14 @@
 # Signup runtime database permissions
 
+Integration checkpoint (2026-10-12): the permission artifact merged through
+[PR #8](https://github.com/ryukkfk/authcore/pull/8) and was extended by
+[PR #9](https://github.com/ryukkfk/authcore/pull/9) for the Phase A ledger.
+The reviewed revision `d51559cf` passed [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583).
+This note describes a **five-table** restricted runtime privilege model; it does
+not prove that existing live credentials have adopted it. The earlier three-table
+candidate was a dated [historical checkpoint](../../docs/Runtime%20Permissions%20Checkpoint.md).
+No permissions are automatically provisioned by this documentation update.
+
 This development slice supplies explicit permission provisioning and isolated
 regressions for the current signup schema. It does not change any existing
 application login, `.env`, container, production database or API startup behavior.
@@ -131,9 +140,13 @@ permitted append operation after full application compromise. Live runtime roles
 have not been switched, so this development change alone does not establish that
 any existing environment already has restricted credentials.
 
-Retention/account deletion, distributed lease/COMMIT fencing, unknown COMMIT
-reconciliation/idempotency, registration policy, verification delivery, timing
-resistance and production operational validation remain unresolved. The PR #7
+The Phase A ledger/crypto foundation is merged, but HTTP Idempotency-Key
+handling, SignupService orchestration, COMMIT acknowledgement recovery,
+retention cleanup and a live HMAC rotation protocol are **not** implemented.
+Keep the HMAC v1 secret/version stable for active ledger retention. Account
+deletion policy, distributed lease/COMMIT fencing, registration policy,
+verification delivery, timing resistance and production operational validation
+remain unresolved. The PR #7
 owner exception remains limited to that earlier development merge; it is not
 independent human security review of this change.
 
