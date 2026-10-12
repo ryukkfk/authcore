@@ -5,209 +5,264 @@
 > No Phase B behavior is implemented or approved by this document.
 > `SIGNUP_ENABLED=false`; AUTH-001 remains incomplete; production readiness is not established.
 
-## Safety argument and its prerequisites
+## Safety argument and evidence boundaries
 
-The execution authority is the retained claim's PostgreSQL row lock. Every writer must
-hold it continuously from a separate fresh result read through domain writes, result
-INSERT and transaction end. PostgreSQL serializes these writers. No owner deletes or
-rebinds claims; no HMAC namespace drift; recovery uses the authoritative primary with
-acknowledged-data durability. If these prerequisites fail, this proof does not apply.
+Every participating writer holds the retained claim's PostgreSQL row lock continuously
+from a separate fresh result read through domain/result writes and transaction end.
+No owner deletes/rebinds claims, HMAC identity stays fixed, and recovery uses one trusted
+authoritative primary lineage. Acknowledged-data loss, forged INSERTs or mixed writers
+break these assumptions; S0 did not validate them operationally.
 
-Under explicitly selected READ COMMITTED, acquire `SELECT ... FOR UPDATE` first, then
-issue a new statement for the result. A join/result read in the same statement that
-waited for the lock can use a pre-wait snapshot and miss a just-committed result. Never
-use that pattern. [PostgreSQL isolation](https://www.postgresql.org/docs/17/transaction-iso.html)
-and [locking](https://www.postgresql.org/docs/17/explicit-locking.html) explain these boundaries.
+[S0 evidence](Signup%20Phase%20B%20Test%20Plan.md#s0-verified-evidence) distinguishes
+real PostgreSQL observations from injected faults and future controls. S0-01/05 show
+complete server COMMIT completion followed by proxy-withheld ACK and a new independent
+committed witness. S0-02 shows real server error/ROLLBACK and absent owned writes.
+S0-03/04 confirm current owner defects, not safe behavior. S0-06 verifies both writer
+outcomes and the negative same-statement JOIN. S0-07 verifies ordinary failed-backend
+eviction, not all function-owned deadlines.
 
-After recovery acquires the unchanged claim lock, earlier conforming writers have ended.
-A fresh missing result then establishes **safe execution eligibility while the new lock
-is held**, subject to expiry/admission. It does not establish which earlier attempt
-rolled back. If the lock is released, eligibility must be re-established under a new
-lock. A plain missing SELECT, expiry, Redis release or socket closure establishes neither.
+Explicit READ COMMITTED: acquire SELECT FOR UPDATE, then issue a separate result SELECT.
+A same-statement JOIN can retain a pre-wait snapshot and miss a newly committed result.
+After a conforming lock barrier and fresh miss, execution eligibility is valid only
+while the unchanged lock remains held, subject to selected D04/admission policy.
+It is not a universal classification of which earlier attempt rolled back.
+An unlocked miss, Redis lease expiry, process death or local socket closure proves
+neither historical rollback nor that a previously sent COMMIT failed.
+[PostgreSQL isolation](https://www.postgresql.org/docs/17/transaction-iso.html) and
+[locking](https://www.postgresql.org/docs/17/explicit-locking.html) support the protocol.
 
-## Proposed outcome-aware transaction owner
+## Proposed typed owner, proof latch and error precedence
 
-The current [owner](../../packages/db/src/signup-transaction.ts) throws raw primary errors
-and evicts failed connections, but does not expose whether COMMIT was sent/acknowledged.
-It also permits a release error to mask acknowledged success. Introduce a typed internal
-outcome only after tests; do not infer it from HTTP errors or string matching.
+The normative proposed model is the pending
+[D06 decision record](Signup%20Phase%20B%20D06%20Decision.md).
+It separates transaction outcome (NOT_SUBMITTED, ABORT_CONFIRMED, COMMIT_UNKNOWN,
+COMMIT_ACK, COMMIT_ROLLBACK), accepted business proof, and cleanup health.
+These are proposed internal types; no source/API changes exist in this PR.
 
-| State/evidence | Permitted conclusion | Action |
-| --- | --- | --- |
-| COMMIT not submitted; authoritative server abort or completed rollback of this transaction | Definite non-commit of this attempt | Return mapped failure; later same-key retry can lock/check again |
-| COMMIT not submitted; transport gone without server termination evidence | No COMMIT was intentionally sent, but backend may still hold locks/work | Stop sending work, settle transport; later lock acquisition is the synchronization barrier |
-| COMMIT submitted, no verified success response | Unknown, even if a later ROLLBACK command succeeds | Evict/settle original connection; bounded independent recovery |
-| Verified successful COMMIT command completion | Committed according to approved durability profile | Latch accepted result; later pool/Redis release failures cannot turn it into a failed signup |
-| COMMIT completes with ROLLBACK command tag | Transaction did not commit | Never convert a resolved query promise alone into success |
-| Fresh authoritative immutable result for matching retained claim | Committed accepted response, including duplicate-email path | Replay exact 202; no new domain work |
-| Claim lock acquired, separate result read missing | No earlier conforming writer can subsequently commit without reacquiring this row | Recovery does not write; normal future retry may execute only after locking/checking again |
-| Lock unavailable, DB unavailable, claim missing/replaced, or uncertain primary lineage | Unresolved/integrity unavailable | 503, no replacement claim, no success fabrication |
+Set COMMIT_UNKNOWN conservatively before dispatch can occur; require the exact COMMIT
+tag to establish COMMIT_ACK. A resolved ROLLBACK tag means COMMIT_ROLLBACK and must not
+return work success. SQLSTATE-only or a later no-op ROLLBACK is not a universal classifier.
+T1 COMMIT proves reservation only. Exact T2 COMMIT plus atomic accepted-result writes,
+or a validated fresh authoritative immutable result, establishes business acceptance.
 
-The adapter must verify command completion/tag and preserve first SQLSTATE plus outcome
-phase before cleanup. A SQLSTATE alone is not a universal COMMIT classifier: deadlock or
-serialization abort is definitive only with transaction/command evidence. ROLLBACK
-after lost COMMIT ACK can be a no-op in a new idle state. Local `end()`/destroyed socket
-prevents further client writes but does not prove backend rollback. Never resend COMMIT
-or execute account work recursively because cleanup appeared successful.
+Maintain NONE -> ACCEPTED as a monotonic request-level proof latch outside transaction
+callback and catch/finally. Validate matching claim ID/frozen binding, exact result
+version/body and primary lineage before latching. No result from the reader's own
+uncommitted writes counts as authoritative replay proof. A later cleanup failure,
+ROLLBACK, cancellation, Redis error or disconnect cannot downgrade accepted proof.
+The original attempt's history can remain unknown even though accepted persistence
+is now proven. No proof is manufactured from callback return or query-promise resolution.
 
-Use the same checked-out connection for each transaction, as required by
-[node-postgres](https://node-postgres.com/features/transactions). No detached pending
-query may outlive ownership. A timeout must settle/cancel the actual transport and
-dispose of a late acquired client, not merely `Promise.race` a pending operation.
+Freeze the primary operation/server SQLSTATE with phase before cleanup; preserve it
+over rollback/end/release errors, keeping cleanup diagnostics separately.
+After valid proof, business response is exact generic 202 if deliverable regardless
+of cleanup health. Before proof, integrity/permission errors map safely, synchronized
+selected-D04 refusal may map to 409, transient/unknown maps to controlled 503.
+COMMIT_ROLLBACK never returns callback success; an unexplained tag is invariant 500,
+a confirmed transient abort is 503. Failed no-proof recovery cleanup yields 503.
+Response delivery is separate from durable outcome.
 
-## Bounded recovery protocol (proposed)
+## Ownership and proposed budgets
 
-At most one fresh recovery attempt per HTTP request, after original transport settlement.
-Proposed recovery budget: connection acquisition at most 1 second, row lock at most
-1 second, statement at most 1 second, whole recovery transaction at most 3 seconds,
-idle transaction at most 1 second, teardown at most existing 1 second. These are targets
-for a tested owner/adapter, not current pool settings. No wait is unbounded; inability
-to acquire/settle within the response budget returns 503 and retains local admission
-until actual work/transport settles. Cleanup cannot launch an unowned background retry.
-Recovery acquisition plus transaction plus teardown has a proposed maximum 5-second
-budget; nested lock/statement deadlines fit inside it. Skip recovery and return503 if
-the remaining response budget cannot accommodate it. No hard whole-request latency is
-claimed for native Argon2/process stalls; local admission stays occupied until that work
-settles, even after a client disconnect.
+[D06 ownership rules and budget table](Signup%20Phase%20B%20D06%20Decision.md#budget-reconciliation-and-recommended-targets)
+reconcile the current 5s pool acquire, 1/5/15/3s lock/statement/transaction/idle constants
+and 1s teardown constant with future owner deadlines.
+T1/T2 preserve server lock/statement/transaction/idle targets; propose a function-owned
+1s acquisition and one aggregate disposal budget. T3 is a separate profile:
+1s acquisition + 3s transaction (500ms lock, 1s statement/idle) + 1s aggregate disposal,
+nominal 5s. The former equal 1s lock/statement proposal could not guarantee lock-timeout
+precedence. Do not globally change constants or call two sequential cleanup timers one second.
 
-T3 is a normal transaction with **no domain/result writes**, not SQL `READ ONLY`:
-PostgreSQL row locking is needed. It acquires one capacity slot before the known claim.
-It never reserves a substitute claim, hashes a password or creates a user. A committed
-result observed during T3 remains authoritative even if ending this no-domain-write
-transaction fails; release its lock/transport safely and replay accepted success.
+Actual acquisition/query/transport operations remain owned until cancellation/settlement,
+or explicitly quarantined under a cleanup owner while local capacity stays reserved.
+Late checkouts never BEGIN/work after cancellation; they are disposed once.
+No healthy idle return with a pending query; no abandoned Promise.race, unobserved
+rejection, repeated release or detached domain retry. Abort before COMMIT dispatch;
+after possible dispatch, cancellation does not erase uncertainty. Evict failed/fatal/
+unknown clients. A release fault must not reproduce S0-04 checkout retention.
+
+Timeout targets need future driver/real-backend acceptance. Server statement completion
+does not bound ACK delivery. No hard whole-request bound is proven under event-loop/OS
+stalls, native Argon2, partition or shutdown. Local closure is not server rollback proof.
+If recovery's remaining response budget is insufficient, skip it and return 503 without
+starting new work; retain ownership of any actual pending cleanup.
+
+## Corrected T2 and T3 pseudocode (proposed, unimplemented)
+
+At most one fresh T3 per request, after the original transport is locally settled and
+cannot send further work. T3 acquires capacity then the known claim, uses a separate
+fresh SELECT and never hashes/reserves/writes domain, accepted result or expiry state.
+It is a normal transaction, not SQL READ ONLY, because row locking is required.
+D04 terminalization, if separately approved, belongs to a normal policy-owning writer.
 
 ```text
 handle(request):
   validate_guards_header_DTO_and_admit()
+  proof = NONE                         # request-owned, never cleared by cleanup
   binding = frozen_v1_HMAC(validated_input)
-  claim, positive_result = independently_commit_T1_reservation(binding)
-  # If T1 ACK is lost: bounded primary lookup; matching durable claim required.
-  if positive_result: return exact_202
-  hash = claim_appears_active ? Argon2(validated_password) : none
-  outcome = T2_on_one_client(READ_COMMITTED):
-    acquire_one_fixed_capacity_slot_or_abort()
-    row = lock_known_claim_and_verify_id_binding()
-    result = separate_fresh_result_statement(row.id)
-    if result: return REPLAY_WITHOUT_WRITES
-    if row.expires_at <= database_clock_timestamp(): return EXPIRED_WITHOUT_WRITES
-    assert_valid_admission_and_not_cancelled()
-    require_hash_or_abort_without_writes()
-    try: user = create_user_with_targeted_unique_conflict_handling()
-    catch DuplicateUserEmailError: user = none
-    if user:
-      insert_credential(user, hash)
-      insert_mandatory_creation_audit(user)
-    insert_accepted_result(row.id)
-    commit_and_classify()
-  if outcome.committed or outcome.proven_replay: return exact_202
-  if outcome.expired_without_writes: return fixed_409
-  if outcome.definitely_aborted: return safe_mapped_failure
-  return recover_without_domain_writes(claim, binding)
+  claim = independently_commit_or_prove_T1_reservation(binding)
+  # T1 COMMIT/claim proof alone is not signup acceptance.
+  if validated_authoritative_result_seen_in_T1:
+    latch_accepted(proof, immutable_result)
+  if proof.accepted: return exact_202_if_connected
+  hash = active_hint_under_selected_D04 ? Argon2(validated_password) : none
+  T2_record = owned_T2(READ_COMMITTED, external_proof_latch=proof):
+    acquire_capacity_then_known_claim_and_verify_id_binding()
+    result = separate_fresh_result_statement()
+    if valid_authoritative_result(result):
+      latch_accepted(proof, result)      # BEFORE ending T2 or releasing resources
+      end_read_path_without_domain_writes()
+    else:
+      eligibility = selected_D04_under_same_lock()
+      if eligibility != ACTIVE: end_without_domain_writes(eligibility)
+      else:
+        assert_admission_and_not_cancelled()
+        require_hash_or_abort_without_hashing_inside_T2()
+        create_user_or_precise_duplicate_path_with_required_credential_audit()
+        insert_accepted_result()
+        mark_commit_dispatch_unknown_before_query()
+        tag = send_single_COMMIT_and_await_completion()
+        if tag == COMMIT:
+          record_COMMIT_ACK()
+          latch_accepted(proof, validated_atomic_T2_work)
+        else if tag == ROLLBACK: record_COMMIT_ROLLBACK()
+        else: record_COMMIT_UNKNOWN_protocol_failure()
+    # owner catches failures and disposes; never downgrades external proof
+  if proof.accepted: return exact_202_if_connected
+  if T2_record.policy_refusal_and_cleanup_healthy: return selected_D04_response
+  if T2_record.definite_abort_or_not_submitted: return safe_mapped_failure
+  return recover_without_domain_writes(claim, binding, proof)
 
-recover_without_domain_writes(claim, binding):
-  try T3_with_one_attempt_and_bounded_owner(READ_COMMITTED):
-    acquire_one_fixed_capacity_slot_or_abort()
-    row = lock_known_claim_and_verify_id_binding()
-    result = separate_fresh_result_statement(row.id)
-    if result: latch PROVEN_ACCEPTED
-    else if row.expires_at <= database_clock_timestamp(): latch EXPIRED
-    else: latch RETRYABLE_WITHOUT_HISTORICAL_ROLLBACK_CLAIM
-  catch unresolved: return fixed_503_retry_after_1
-  if PROVEN_ACCEPTED: return exact_202
-  if EXPIRED: return fixed_409
+recover_without_domain_writes(claim, binding, proof):
+  owner = bounded_owner_for_one_T3_attempt()
+  primary = NONE
+  refusal = NONE
+  cleanup = NOT_STARTED
+  try:
+    owner.acquire_or_cancel_with_late_checkout_disposal()
+    owner.BEGIN_READ_COMMITTED_and_install_T3_profile()
+    owner.acquire_capacity_then_lock_known_claim()
+    verify_unchanged_claim_id_and_frozen_binding()
+    result = separate_fresh_authoritative_result_statement()
+    if valid_authoritative_result(result):
+      latch_accepted(proof, result)      # outside owner; cannot be unset
+    else:
+      refusal = read_selected_D04_policy_without_writes()
+      # A: terminal proof -> refusal; timestamp-only expiry without fact -> unresolved
+      # B: current predicate refusal only; never claim permanent terminality
+    owner.finish_read_transaction_with_bounded_ROLLBACK()
+    # This ROLLBACK ends T3, not proof about the original unknown T2.
+  catch error:
+    primary = freeze_correlated_primary(error)
+    # NO RETURN HERE; later cleanup errors must not bypass proof selection.
+  finally:
+    try:
+      cleanup = owner.dispose_and_observe_pending_operations_once()
+    catch cleanup_error:
+      cleanup = owner.quarantine_and_retain_capacity_no_throw(cleanup_error)
+      # Must not throw over proof; health and durable business outcome stay separate.
+    record_allowlisted_cleanup_health_no_throw_no_payloads(primary, cleanup)
+  if proof.accepted:
+    record_proof_success_no_throw_independently_of_cleanup_health()
+    return exact_202_if_connected
+  if primary != NONE and primary.is_permission_or_unexpected_invariant: return safe_fixed_500
+  if primary != NONE or cleanup not healthy: return fixed_503_retry_after_1
+  if refusal.valid_under_selected_D04: return fixed_409
   return fixed_503_retry_after_1
 ```
 
-Pseudocode describes future boundaries, not existing function signatures. An expired
-hint that becomes active due to clock correction cannot start writes without a hash;
-abort that attempt safely and retry rather than hash while holding T2. Positive committed
-result proofs are latched before cleanup so a later cleanup failure cannot erase them.
-No account-work retry happens within recovery; client retry reacquires every prerequisite.
+All helper names are future contracts, not implemented functions. Cleanup envelopes and
+telemetry epilogues must not throw over latched proof; quarantine retains ownership and
+records degraded health even if logging fails. Healthy disposal means confirmed local settlement/eviction with no unresolved cleanup fault; intentional settled eviction alone is not a failure. Process-fatal faults can prevent delivery,
+not undo the committed database result. dispose/quarantine
+must own actual operations and report health accurately; silently swallowing cleanup
+without eviction/ownership is forbidden. A latched accepted proof takes precedence
+through catch, finally, rollback, end and release, including errors raised after proof.
+No-proof failure remains controlled, not a fabricated success. Full T3 service/HTTP
+acceptance is S4/S5; S1 adds owner-level proof-envelope security regressions.
+
+Allowlisted operational reason counters include outcome=commit_ack/commit_unknown/
+commit_rollback/result_proof and cleanup=clean/evicted/quarantined/release_failure.
+Emit independent cleanup-health alerts and bound/quarantine capacity; never append a
+duplicate domain audit/result merely to log cleanup. No raw SQL/errors, keys, binding
+digests, passwords, hashes, tokens or connection URLs in telemetry. Disconnection may
+prevent HTTP delivery without changing the durable result.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Reserved
-    Reserved --> Executing: Lock and fresh result miss and active
-    Reserved --> Accepted: Committed result found
-    Reserved --> Expired: Lock and fresh miss after expiry
-    Executing --> Accepted: COMMIT acknowledged
-    Executing --> Unknown: COMMIT sent without acknowledgement
-    Executing --> Reserved: Definite abort while claim retained
-    Unknown --> Accepted: Authoritative result found
+    Reserved --> Executing: Lock plus fresh miss plus approved eligibility
+    Reserved --> Accepted: Authoritative immutable result
+    Reserved --> ExpiryRefused: Current timestamp refusal
+    ExpiryRefused --> Reserved: Option B clock reversal permits reevaluation
+    ExpiryRefused --> TerminalExpired: Option A durable terminal decision commits
+    TerminalExpired --> TerminalExpired: Retained terminal proof
+    Executing --> Accepted: Exact T2 COMMIT tag
+    Executing --> Unknown: COMMIT may be submitted without exact proof
+    Executing --> Reserved: Server-confirmed abort
+    Unknown --> Accepted: Fresh immutable result proof
     Unknown --> Pending: Lock or database unavailable
-    Unknown --> Reserved: Lock then fresh miss and active
-    Unknown --> Expired: Lock then fresh miss and expired
-    Pending --> Unknown: Same key retry
-    Accepted --> Accepted: Replay even after expiry
-    Expired --> Expired: No renewal or rebinding
+    Unknown --> Reserved: Lock plus fresh miss only establishes eligibility
+    Unknown --> ExpiryRefused: Selected D04 refusal
+    Pending --> Unknown: Same binding retry
+    Accepted --> Accepted: Proof survives cleanup and expiry
 ```
 
-These are logical states, not new mutable database columns. Reserved/Unknown/Pending
-can look identical in an unlocked ledger read. Do not synthesize a stored success from
-the state diagram. An authorized pre-expiry writer may commit later; therefore always
-check the result under the acquired lock before rejecting an expired claim.
+These are logical distinctions, not approved database columns. Option A terminal
+state needs a separate schema/grant review; option B refusal is explicitly reversible.
+Without a selected D04 policy the expiry execution path remains blocked.
 
 ## Redis lease and PostgreSQL fencing
 
-Verified Redis admission uses Redis TIME and a sorted set, UUID lease tokens, 30-second
-TTL, 10-second renewal, no resurrection after expiry, exact-token release and bounded
-transport retirement. Rate limits are atomically evaluated inside Redis only. None of
-these operations atomically fences PostgreSQL COMMIT.
+Verified baseline admission uses Redis TIME, UUID lease tokens, 30s TTL, 10s renewals,
+no resurrection, exact-token release and bounded transport retirement. It does not
+atomically fence PostgreSQL COMMIT. A worker may stall after its last lease check,
+lose Redis ownership and still execute an already queued COMMIT.
 
-Counterexample: worker A checks its lease, stalls after its last check, Redis expires A,
-worker B gets a slot, A's already queued COMMIT executes. A cannot be prevented from
-committing by Redis expiry alone. Claim-row serialization stops B from double-executing
-**the same key**, not from executing another key or increasing global Argon2 concurrency.
-Transaction-level PostgreSQL slots are retained until actual server transaction end;
-they prevent participating PostgreSQL capacity from being freed just by a Redis expiry.
-They do not stop a pre-expiry admitted writer from completing, and do not provide an
-exact lease-valid-at-COMMIT guarantee. That guarantee is deliberately not promised.
-
-If lease loss is observed before COMMIT, abort without accepted result; if COMMIT has
-already been submitted, classify/recover. Expiry never authorizes a replacement writer
-to bypass the row lock. Cancellation has the same boundary. Redis failover can lose
-quota/lease state; PostgreSQL identity still serializes per key while the approved
-primary lineage survives. Availability is sacrificed on Redis command uncertainty.
-See [Redis locking assumptions](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/).
+Claim locking serializes the same retained key, not different keys or global Argon2.
+Proposed transaction-level PostgreSQL capacity slots remain held until server
+transaction end; they do not provide lease-valid-at-COMMIT or a hard fleet hash cap.
+Observed pre-dispatch lease loss cancels work; after possible COMMIT dispatch,
+classify/recover. Valid accepted proof survives later Redis cleanup failure.
+[Redis locking assumptions](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/)
+remain an operational boundary.
 
 ## Crash points, expiry and maintenance
 
-| Crash point | Durable state and recovery |
+| Crash point | Durable state / proposed recovery |
 | --- | --- |
-| Before T1 commit | Claim may be absent, invisible or committed if ACK was lost; reserve/recheck with same binding, never assume absence proves rollback |
-| After T1 commit, before hashing/T2 | Orphaned claim, no success; next active retry can execute under lock |
-| After user/credential/audit/result INSERT before COMMIT | Uncommitted writes invisible; retry waits for row lock; server abort removes all T2 writes |
-| COMMIT in flight | Accepted result may commit or all T2 writes may abort; fresh lock/read resolves eligibility or proves success |
-| After COMMIT before HTTP delivery | Retained result proves accepted; replay has no duplicate domain effects |
-| During recovery | No domain writes; terminate/settle, then later same-key request repeats bounded proof |
+| Before/around T1 COMMIT | Claim absent, invisible or committed; prove matching retained identity before account work |
+| After T1, before hashing/T2 | Orphan retained claim; later approved-policy execution requires lock/fresh read |
+| During T2 writes, before COMMIT dispatch | Writes uncommitted; no immediate rollback inference from socket death; server abort/lock barrier matters |
+| COMMIT in flight | Original outcome unknown until correlated evidence; fresh result can prove acceptance |
+| After T2 COMMIT before HTTP response | Retained accepted result permits replay; delivery separate |
+| During T3 before proof | No writes; controlled 503 and future same-binding retry |
+| During T3 after proof | Accepted conclusion preserved despite rollback/release/teardown failure; cleanup health independently degraded |
+| During option A terminalization (future) | Unknown ACK requires authoritative terminal proof, not a volatile expired observation |
 
-Proposed D04 expiry is a 24-hour execution-start window; duration requires approval.
-Use `clock_timestamp()` after lock wait, not transaction-start `now()` for that decision.
-The Phase A reservation API still checks application time and the database CHECK; clock
-disagreement fails closed, never extends existing expiry. Expiry does not imply rollback.
+[D04](Signup%20Phase%20B%20D04%20Decision.md) compares durable terminalization,
+explicitly non-monotonic timestamp policy and alternative time/epoch protocols.
+clock_timestamp() after waiting fixes stale transaction-start time; it does not create
+permanent monotonic expiry. Preserve immutable binding/expiry, result-first checks,
+late authorized commits, no rebinding and no cleanup. Recommended A is conditional
+on an approved state/grant extension; none is made here. T3 remains read-only in
+domain/state effects under every option.
 
-Initially retain all claims/results, including expired and unresolved ones. Safe automatic
-cleanup eligibility is **empty**. Finite retention would forget an old raw key, allowing
-late retries to rebind; locks and a temporary maintenance drain alone do not prevent
-that after traffic resumes. A future owner-managed cleanup protocol needs durable
-tombstones or permanent namespace retirement, reviewed retention/account deletion policy,
-all-writer quiescence and primary lineage evidence. Only then can owner-controlled
-result-before-claim deletion respect the FK. Runtime DELETE/UPDATE privileges stay denied.
+Initially retain all claims/results and any future terminal facts. Safe automatic
+cleanup eligibility is empty. Deletion or HMAC namespace changes can permit rebinding;
+temporary drain/locks do not prevent late reuse after traffic resumes. Future cleanup
+needs durable anti-rebinding or permanent namespace retirement, privacy review,
+all-writer quiescence and lineage evidence. Runtime history UPDATE/DELETE stays denied.
 
-One active HMAC secret/version is frozen for the entire retained namespace. A wrong
-secret or new version changes identity and can evade old claims; the ledger cannot
-detect this. Require trusted immutable version/material injection, independent known-answer
-configuration attestation and fleet consistency before enabling Phase B. Detected mismatch
-fails closed; undetected compromise remains a critical residual risk. Old HMAC digests
-cannot be rehashed into a new secret without unavailable plaintext. Do not store raw
-keys/passwords to enable rotation. Cross-version reservation/reconciliation is a separate
-design. On suspected leakage stop new signup and preserve evidence; no automatic rotation
-or ledger deletion. Credential/secret response actions require separate operational authority.
+One frozen active HMAC secret/version per retained namespace; no automatic rotation
+or plaintext retention. Known-answer/fleet attestation is proposed, not implemented.
+On detected drift/leak, stop new signup and preserve evidence; credential response
+requires separate authority. The ledger cannot detect an unknown changed namespace.
 
-Durability and failover prerequisites follow
-[PostgreSQL WAL configuration](https://www.postgresql.org/docs/17/runtime-config-wal.html).
-Timeouts follow [client settings](https://www.postgresql.org/docs/17/runtime-config-client.html);
-current-time semantics follow [date/time functions](https://www.postgresql.org/docs/17/functions-datetime.html).
-See [Threat Review](Signup%20Phase%20B%20Threat%20Review.md),
-[Test Plan](Signup%20Phase%20B%20Test%20Plan.md) and
+References: [PostgreSQL WAL](https://www.postgresql.org/docs/17/runtime-config-wal.html),
+[timeouts](https://www.postgresql.org/docs/17/runtime-config-client.html),
+[time semantics](https://www.postgresql.org/docs/17/functions-datetime.html).
+See [Architecture](Signup%20Phase%20B%20Architecture.md),
+[Threat Review](Signup%20Phase%20B%20Threat%20Review.md),
+[Test Plan](Signup%20Phase%20B%20Test%20Plan.md),
 [Decision Register](Signup%20Phase%20B%20Decision%20Register.md).

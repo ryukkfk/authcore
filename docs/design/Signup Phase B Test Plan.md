@@ -19,7 +19,7 @@ test database/Redis endpoint. No live services, roles or secrets were inspected/
 | [ledger unit](../../packages/db/src/repositories/signup-idempotency.repository.test.ts) | Retained binding/expiry, targeted conflict, fresh lookup, safe errors, fixed result | Service orchestration and real COMMIT uncertainty absent |
 | [runtime integration](../../packages/db/src/runtime-role.integration.test.ts) | Real restricted LOGIN, claim races, expired replay/conflict, row locking, atomic manual result/domain rollback, privilege denial | PG capacity slots, service outcome state and HTTP replay absent |
 | [user integration](../../packages/db/src/repositories/user.repository.integration.test.ts) | Targeted duplicate semantics, continuing transaction after JS duplicate, mandatory audit rollback | Duplicate-email accepted result orchestration absent |
-| [transaction owner](../../packages/db/src/signup-transaction.test.ts) | Error precedence, failed connection eviction, bounded actual transport teardown | Real server committed but ACK lost, COMMIT tag and post-ACK success latch absent |
+| [transaction owner](../../packages/db/src/signup-transaction.test.ts) | Existing error precedence/eviction/transport tests; pinned S0 below adds real ACK-loss/tag/release/lock proof | Correct typed owner, success latch, function-owned acquisition/COMMIT deadlines and HTTP recovery remain unimplemented |
 | [signup service](../../apps/api/src/identity/signup.service.test.ts), [service integration](../../apps/api/src/identity/signup.service.integration.test.ts) | Hash before transaction, allowlists, atomic signup and no secret logging | T1/T2/T3 service flow and result replay absent |
 | [controller integration](../../apps/api/src/identity/auth.controller.integration.test.ts) | Guard/DTO/admission order, generic202 and safe input validation | Mandatory header/duplicates/conflict/pending mappings absent |
 | [HTTP E2E](../../apps/api/src/identity/signup.e2e.test.ts) | Restricted role, audit-denial rollback, real lease-loss and timeout behavior | No Idempotency-Key enforcement or commit-recovery E2E |
@@ -32,6 +32,48 @@ recreate containers or connect to production to obtain coverage. Local tests wer
 required/run in this documentation review. A machine-policy blocker must be reported,
 never bypassed or counted as a pass.
 
+## S0 verified evidence
+
+Pinned [S0 Draft PR #12](https://github.com/ryukkfk/authcore/pull/12) head:
+`822062fea79fad3e5a8547dc9f7b40b999f7cb71`.
+[CI #28](https://github.com/ryukkfk/authcore/actions/runs/38232288230) and
+[Verify job logs](https://github.com/ryukkfk/authcore/actions/runs/38232288230/job/114754416497)
+executed the PR merge checkout `619a3e50eb3c8d01affdbabb63d78a99bdab1603`;
+it has no file differences from that S0 head. Nine real cases passed with zero skips;
+369 existing regressions and 378 total distinct tests passed.
+PostgreSQL 17.11, fsync=on, synchronous_commit=on, primary mode; before/after database,
+role, anchor-schema and uniquely owned-session inventories matched.
+Ordinary PostgreSQL invocation skipped nine S0 cases because approval was absent there;
+the separately enabled focused invocation executed all nine. These counts are historical
+S0 evidence, not tests run by this documentation-only correction or S1 correctness.
+
+Pinned source: [real fixture](https://github.com/ryukkfk/authcore/blob/822062fea79fad3e5a8547dc9f7b40b999f7cb71/packages/db/src/signup-commit-outcomes.integration.test.ts),
+[proxy](https://github.com/ryukkfk/authcore/blob/822062fea79fad3e5a8547dc9f7b40b999f7cb71/packages/db/src/s0-commit-proxy.test-support.ts),
+[unit characterization](https://github.com/ryukkfk/authcore/blob/822062fea79fad3e5a8547dc9f7b40b999f7cb71/packages/db/src/signup-commit-outcomes.test.ts),
+[synthetic TCP tests](https://github.com/ryukkfk/authcore/blob/822062fea79fad3e5a8547dc9f7b40b999f7cb71/packages/db/src/s0-commit-proxy.test.ts),
+[S0 evidence notes](https://github.com/ryukkfk/authcore/blob/822062fea79fad3e5a8547dc9f7b40b999f7cb71/packages/db/S0_COMMIT_OUTCOMES.md).
+Those files are on PR #12, not implicitly merged into this design branch.
+
+| S0 case / evidence class | Verified observation | Design assertion / future acceptance boundary |
+| --- | --- | --- |
+| S0-01 REAL + proxy-injected transport failure | Complete server CommandComplete(COMMIT) received, entire ACK/following ReadyForQuery withheld; owner rejects; new independent connection sees committed marker | COMMIT_UNKNOWN can coexist with committed persistence; F10/P04/P05. No missing-result or socket rollback inference |
+| S0-02 REAL | 22012 ERROR, acknowledged ROLLBACK, independent owned marker absent | Correlated definite abort; F07/P05 |
+| S0-03 REAL / CONFIRMED DEFECT | COMMIT resolves with actual ROLLBACK tag; current owner returns false success; marker absent | F27/P05 must reject this behavior in S1. Historical passing known-gap assertion is evidence of the bug |
+| S0-04 REAL + synthetic release boundary / CONFIRMED DEFECT | Actual COMMIT/witness, injected release exception, caller rejection and retained real pool checkout | F25/P05 success latch and disposal regressions must pass against corrected owner |
+| S0-05 REAL + proxy-injected transport failure | Independent reservation survives complete ACK loss; fresh connection matches immutable identity/binding/expiry; conflict/renewal rejected | F24/P02 building block only; no T1 service/HTTP orchestration proof |
+| S0-06 COMMIT REAL | pg_blocking_pids barrier, writer COMMIT, lock acquired, separate fresh accepted result | F05/P04 correct schedule |
+| S0-06 ROLLBACK REAL | Real wait, writer ROLLBACK, lock acquired, separate fresh miss | Safe eligibility under continuously held lock, not universal historical classification |
+| S0-06 JOIN REAL negative demonstration | Same-statement pre-wait snapshot misses result, later separate SELECT finds it | F05/P04 must forbid joined lock/result oracle |
+| S0-07 REAL | Actual ROLLBACK, failed checkout evicted, old backend absent, new checkout different PID | Real teardown/reuse boundary; not stalled-COMMIT/acquisition deadline proof |
+| SYNTHETIC/UNIT | Fragmented/coalesced ACK withholding and zero forwarded bytes; fake-timer acquisition/COMMIT deadline gaps, delayed end/late acquisition | Scheduling/parser evidence only; no durable DB outcome proof from mocks |
+| PROPOSED, UNIMPLEMENTED | D06 proof latch/cancellation/typed owner; corrected T3; selected D04 policy; T1/T2/T3 HTTP orchestration | S1-S6 acceptance remains future work; no implementation approval |
+| OPERATIONAL ASSUMPTIONS | Trusted writers/primary lineage, failover durability, fleet secret consistency, capacity/time faults | Not established by ephemeral S0 fsync/settings or 378 tests |
+
+D04 backward-clock counterexample is a design finding, not a real clock-shift S0 test.
+Full crash/power-loss/failover durability and restricted-role advisory capacity were
+not established by S0. Accepted proof never relies on a partial protocol frame, callback
+value or a result in the reader's own uncommitted write transaction.
+
 ## Required future automated groups
 
 | Group | Scenario IDs from Failure Matrix | Assertions / oracle |
@@ -40,22 +82,45 @@ never bypassed or counted as a pass.
 | P02 Reservation | F04-F06, F18-F20, F24 | Two-client barriers before claim commit/rollback; independent T1 commit proof; same claim ID/binding/expiry retained; wrong secret demonstrably creates distinct identity and must be blocked by configuration gate |
 | P03 Domain/result atomicity | F01-F03, F07, F23 | Inject failure after every domain/result INSERT; inspect C plus exact U/P/A/R counts; legacy duplicate leaves credentials/audit untouched; no failed result stored |
 | P04 MVCC and recovery | F05, F09-F13, F17, F19-F21, F24, F27-F28 | Acquire lock before separate fresh SELECT; proxy-dropped COMMIT reply; original backend still running; rollback vs commit branches; recovery never writes; stale replica/lineage forbidden |
-| P05 Transaction owner | F07-F13, F17, F25, F27 | Outcome phase transitions, successful command tag, SQLSTATE precedence, rollback-after-unknown not proof, no Promise.race leak, late checkout disposal, COMMIT success latch survives cleanup errors |
+| P05 Transaction owner | F07-F13, F17, F25, F27 | D06 typed evidence/proof/cleanup axes; exact COMMIT tag; COMMIT_ROLLBACK never success; acknowledged accepted COMMIT survives cleanup; SQLSTATE precedence, cancellation/late checkout, stalled COMMIT, no unowned pending operations |
 | P06 Admission/capacity | F14-F17, F22, F26 | Multiple processes, Redis TIME/lease expiry, server-held PG slots survive client stalls until transaction end, rate tokens not refunded, local capacity held until work settles |
-| P07 Security/operations | F18, F21, F23, F28 and T01-T16 | Effective privilege/no-escalation regression, no logging/tracing correlators, payload/error size bounds, no cleanup/rebinding, secure secret injection/fleet attestation, controlled failover experiment |
+| P07 Security/operations | F18, F21, F23, F28 and T01-T17 | Effective privilege/no-escalation regression, no logging/tracing correlators, payload/error size bounds, no cleanup/rebinding, secure secret injection/fleet attestation, controlled failover experiment |
+| P08 Expiry-policy acceptance | F19-F20 and T17 | Selected D04 A/B/C semantics; backward-clock counterexample; durable terminalization ACK-loss/crash/restart if A; explicit non-monotonic limitation if B; late authorized commit, result-first lock ordering, T3 never writes terminal state; no unapproved grants |
 
 All F01-F28 are required scenarios, including negative demonstrations of architectural
 assumptions. These are test specifications, not implemented tests or claimed successes.
 All T threat IDs are defined in [Threat Review](Signup%20Phase%20B%20Threat%20Review.md).
+
+## S1 security-regression transition (required)
+
+Historical PR #12 remains unchanged. Its S0-03/04 passing assertions intentionally
+expect unsafe current behavior. They cannot be copied unchanged as S1 correctness
+tests. At the future S1 head:
+- Replace the owner-level false-success expectation with COMMIT_ROLLBACK/abort,
+  no callback success and exact tag/independent absent-write evidence.
+- Replace post-ACK caller rejection with preserved committed work/accepted proof,
+  independent committed witness and verified disposal (including release before/after
+  pool removal). Never hide the release fault or retain an orphaned checkout.
+- Old owner must fail those future security regressions. Retain historical S0 evidence
+  without mutating PR #12 or claiming a known-gap pass proves a fixed implementation.
+- Add proof-latch tests spanning catch/finally/rollback/end/release/Redis/disconnect,
+  no proof -> controlled failure, and complete operation/late-checkout ownership.
+  Full T3 service/HTTP tests remain S4/S5; S1 tests owner-level guarantees only.
+- Assert no idle reuse until all pending operations settle, no second release after
+  late end, no BEGIN after cancelled acquisition, and target-budget limits under a
+  schedulable process. No hard event-loop-stall latency claim.
+
+See [D06 acceptance](Signup%20Phase%20B%20D06%20Decision.md#s1-acceptance-and-remaining-risks)
+and separate [D04 acceptance](Signup%20Phase%20B%20D04%20Decision.md#required-policy-acceptance-and-tests).
 
 ## Lost-COMMIT fault harness acceptance
 
 Use disposable PostgreSQL and an isolated protocol-aware TCP proxy between the test API
 and DB, or a server/client adapter with equivalent observable command boundaries.
 Generate test-only credentials; never log raw protocol frames because they can contain
-passwords/hashes/keys. The proxy must prove COMMIT was forwarded, then selectively drop
-the reply while an independent administrative observer confirms the resulting committed
-ledger state. Include the complementary branch where the server aborts before commit.
+passwords/hashes/keys. The proxy must prove COMMIT was forwarded, then observe complete server CommandComplete(COMMIT) before withholding the entire
+ACK frame and following ReadyForQuery. A newly opened independent authoritative
+connection confirms committed state. Never use socket destruction as rollback proof. Include the complementary branch where the server aborts before commit.
 
 The observer is a **test oracle**, not a new runtime privilege or recovery dependency.
 Use barriers for T2 lock acquisition, each INSERT, COMMIT transmission, server commit,
@@ -67,15 +132,18 @@ classifying unlocked absence as historical rollback.
 Mock query rejection alone is insufficient to demonstrate commit ambiguity. A mock can
 verify owner classification, but real lost-ACK proof requires the server-side state oracle.
 Test an aborted transaction whose COMMIT resolves with a ROLLBACK tag. Test release errors
-after acknowledged COMMIT without turning the accepted outcome into a failure.
+after acknowledged COMMIT and T3 post-proof catch/finally/rollback/end/release faults
+without turning accepted proof into failure; no-proof counterparts must remain controlled.
 
 ## Concurrency, capacity and timing
 
 Lock schedules must include a result committed while a waiting lock statement's snapshot
 was taken earlier. A negative same-statement join fixture should demonstrate why a separate
 fresh result statement is required. Explicitly assert READ COMMITTED transaction setup.
-Check that `clock_timestamp()` is used after wait and that transaction-start `now()` does
-not authorize an expired new attempt. Approved pre-expiry work may commit late and replay.
+Check fresh current-clock policy after wait under the selected D04 option; transaction-
+start now() cannot implement that check. Neither function proves permanent monotonic
+expiry. P08 must exercise backward time and durable terminalization or explicitly
+accepted reversal. Approved pre-cutoff work may commit late and replay.
 
 Run at least two API processes to expose Redis lease expiry/global-memory overshoot; fake
 timers alone cannot model PostgreSQL server locks. Test four advisory slot holders and
@@ -96,10 +164,11 @@ No commands here authorize live migrations or service changes. CI must report ex
 suite totals, skipped/blocked tests and failure logs without secrets. The historical350
 count must not be reused as a Phase B success count.
 
-For this design review, static validation covers all eight files, relative links,
+For this design review, static validation covers the ten design files, relative links,
 fenced Markdown, Mermaid structure/participant/state consistency, scenario references,
 public path/secret patterns, UTF-8, diff whitespace and documentation-only inventory.
-Full Mermaid renderer execution is not a substitute for semantic review; if unavailable,
+Documentation-only validation does not rerun application/DB commands or claim a new
+Phase B implementation pass. Full Mermaid renderer execution is not a substitute for semantic review; if unavailable,
 record structural/manual verification and the renderer limitation explicitly.
 
 See [Failure Matrix](Signup%20Phase%20B%20Failure%20Matrix.md),

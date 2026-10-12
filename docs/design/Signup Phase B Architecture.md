@@ -39,6 +39,38 @@ Additional inspected boundaries: [credential repository](../../packages/db/src/r
 The pool is max 10 per process, with a 5-second connection timeout. Argon2id uses
 64 MiB memory, time cost 3, parallelism 1. These settings are not throughput measurements.
 
+## S0 evidence integration and typed outcomes
+
+S0 [PR #12](https://github.com/ryukkfk/authcore/pull/12) head
+`822062fea79fad3e5a8547dc9f7b40b999f7cb71` and
+[CI #28](https://github.com/ryukkfk/authcore/actions/runs/38232288230) establish
+nine real PostgreSQL cases with zero skips, 369 existing regressions and 378 total
+distinct passes. PostgreSQL 17.11 had fsync=on, synchronous_commit=on and primary mode;
+test-owned cleanup inventories matched. This is disposable-CI characterization,
+not Phase B service/HTTP correctness, failover proof or production approval.
+The [evidence ledger](Signup%20Phase%20B%20Test%20Plan.md#s0-verified-evidence)
+separates real, synthetic, confirmed-defect, proposed-control and operational-assumption evidence.
+
+Adopt the pending [D06 decision](Signup%20Phase%20B%20D06%20Decision.md), with separate
+transaction evidence, business proof and cleanup health:
+
+| Evidence | Proposed interpretation |
+| --- | --- |
+| COMMIT not submitted | NOT_SUBMITTED; no local COMMIT dispatch, not server rollback/lock-release proof |
+| Correlated server-confirmed abort | ABORT_CONFIRMED; map the frozen primary failure, never callback success |
+| COMMIT may have been submitted without exact completion | COMMIT_UNKNOWN; no retry of domain work; bounded independent recovery |
+| Exact COMMIT command tag | COMMIT_ACK for that transaction; accepted only if it is the atomic accepted-result T2 |
+| COMMIT resolves with ROLLBACK tag | COMMIT_ROLLBACK; definite abort; current owner false success is real S0-03 defect |
+| Post-ACK release/cleanup failure | Cleanup-health failure, not reversal of commit; S0-04 exposes current masking and retained checkout |
+| Fresh matching authoritative immutable result | ACCEPTED business proof, without necessarily classifying the earlier attempt's history |
+
+Promise resolution alone is never committed success. Once validated accepted proof is
+latched outside callback/catch/finally, cleanup, cancellation and Redis errors cannot
+downgrade it. Retain independent cleanup diagnostics and dispose/evict the resource.
+T1 reservation COMMIT, missing result, socket destruction and Redis lease expiry
+never establish signup acceptance or historical rollback. Exact precedence, bounded
+late-checkout/operation ownership and residual limits are in D06.
+
 ## Recommended protocol (proposed)
 
 Use one authoritative PostgreSQL primary lineage, retained immutable claims, a
@@ -48,7 +80,9 @@ can execute. No claim deletion, automatic expiry renewal or HMAC rotation is inc
 
 The participating tables remain exactly `users`, `password_credentials`,
 `security_audit_events`, `signup_idempotency_claims`, `signup_idempotency_results`.
-No schema change is recommended for this first protocol. Owners/superusers can alter
+D06/S1 preserves the current schema and grants. D04 option A would require a separately
+approved terminal-state schema/permission expansion before expiry integration; no
+such change is authorized here. Owners/superusers can alter
 history, and allowed runtime INSERT can fabricate new rows after credential compromise.
 This protocol assumes trusted application writers and does not make storage tamper-evident.
 Live use of restricted credentials has not been established.
@@ -71,19 +105,23 @@ Live use of restricted credentials has not been established.
 5. T2: acquire one PostgreSQL slot, lock the same claim using `lockByKey`, verify its ID
    and immutable binding, then read results in a **separate statement after the lock**.
    A missing/replaced claim is an integrity/unavailability condition (503), not permission
-   to reserve a substitute inside T2. A result returns the constrained 202 response.
-6. If no result, compare `expires_at` with database `clock_timestamp()` after waiting.
-   Expired means 409 without writes. Active means eligibility to begin this attempt;
-   assert admission/cancellation immediately before domain mutations. The policy is
-   an execution-start cutoff, not a wall-clock COMMIT deadline. An already authorized
-   attempt may finish after expiry. This policy needs approval (D04).
+   to reserve a substitute inside T2. A valid result latches accepted proof before any cleanup, then returns the constrained 202 response.
+6. If no result, apply the selected [D04 policy](Signup%20Phase%20B%20D04%20Decision.md)
+   under the same lock. No policy is approved. Recommended A requires durable terminal
+   proof before permanent 409 and a separately reviewed terminalization writer; T3
+   never writes it. Alternative B compares `expires_at` with fresh database
+   `clock_timestamp()` and may reverse a previous timestamp-based refusal after
+   backward clock movement. Without an approved policy, do not authorize execution.
+   Active eligibility still requires admission/cancellation immediately before domain
+   mutations. Execution-start cutoff permits previously authorized work to commit late;
+   it is not a wall-clock COMMIT deadline or permanent timestamp-only expiry guarantee.
 7. Try user INSERT. A new user requires exactly one credential and mandatory
    `identity.user_created` audit INSERT. Catch **only** `DuplicateUserEmailError`
    inside T2: do not modify credentials or add a user-created audit for an existing
    account, including a legacy account without that audit. In either accepted path,
    append the fixed immutable result using `recordAccepted` before COMMIT.
-8. COMMIT T2 using the proposed outcome-aware owner. Only acknowledged COMMIT or an
-   authoritative committed result permits 202. Unknown outcome uses bounded recovery;
+8. COMMIT T2 using the proposed outcome-aware owner. Only exact COMMIT_ACK for the atomic accepted-result T2 or a
+   validated authoritative immutable-result proof permits 202. Unknown outcome uses bounded recovery;
    no hidden recursive account retry. Response delivery is separate from database success.
 
 Two different keys for the same normalized email may legitimately create two accepted
@@ -157,11 +195,14 @@ READ COMMITTED must be explicit, not inferred from an uninspected server default
 The code currently issues plain `BEGIN`. Correctness assumes no owner cleanup/rebinding,
 all writers using the protocol, one stable HMAC namespace, and no acknowledged-data loss
 or split brain. Require an approved durability profile (`synchronous_commit=on`, fsync
-and primary/failover guarantees) before operational adoption; live settings were not read.
+and primary/failover guarantees) before operational adoption. S0 inspected disposable-CI
+settings only; operational primary/failover settings remain unverified.
 During uncertain failover lineage, stop new writes and return 503 rather than treating a
 stale replica miss as recovery evidence. No recovery reads from replicas.
 
 See [Recovery and Fencing](Signup%20Phase%20B%20Recovery%20and%20Fencing.md),
+[D06 Decision](Signup%20Phase%20B%20D06%20Decision.md),
+[D04 Decision](Signup%20Phase%20B%20D04%20Decision.md),
 [Decision Register](Signup%20Phase%20B%20Decision%20Register.md),
 [Failure Matrix](Signup%20Phase%20B%20Failure%20Matrix.md), and
 [Implementation Slices](Signup%20Phase%20B%20Implementation%20Slices.md).

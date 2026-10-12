@@ -87,7 +87,7 @@ All application responses use `Cache-Control: no-store` (new proposed policy). N
 | Disabled route | 403 `{"error":{"code":"HTTP_403","message":"Signup is disabled"}}` | Do not retry until authorized configuration changes |
 | Missing/duplicate/malformed key | 400 `{"error":{"code":"HTTP_400","message":"Invalid Idempotency-Key"}}` | Correct header; never expose its value |
 | Invalid DTO | 400 `{"error":{"code":"HTTP_400","message":"Invalid signup request"}}` | Correct request; proposed generic mapping replaces current safe validator details |
-| Same key/different binding, or expired claim without result after authoritative lock/read | 409 `{"error":{"code":"HTTP_409","message":"Idempotency key unavailable"}}` | Do not automatically change key or payload to bypass an uncertain prior operation |
+| Same key/different binding, or synchronized refusal under selected D04 | 409 `{"error":{"code":"HTTP_409","message":"Idempotency key unavailable"}}` | No auto key/payload change. A requires durable terminal proof; B is current timestamp policy refusal and can reverse after clock correction; selection pending |
 | Pending/unknown outcome, lock/deadlock/transient DB failure, unavailable Redis/DB, no capacity, detected HMAC configuration failure | 503 `{"error":{"code":"HTTP_503","message":"Signup temporarily unavailable"}}` with `Retry-After: 1` | Same key and same payload, bounded exponential backoff plus jitter |
 | Rate exhausted | 429 `{"error":{"code":"HTTP_429","message":"Too many requests"}}` with existing dynamic `Retry-After` | Wait; same key/payload |
 | Unexpected invariant failure or restricted-role permission denial | 500 `{"error":{"code":"INTERNAL_SERVER_ERROR","message":"Internal server error"}}` | Operator investigation; no privilege relaxation or fabricated result |
@@ -108,9 +108,29 @@ unique binding: a durable winner causes 409 for the loser; an uncommitted winner
 rolls back has not established a permanent binding.
 
 After client timeout/disconnect, retry the same key/payload. Network failure does not
-prove rollback. An expired claim with a retained result still replays 202; expired with
-no result does not authorize rebinding. A new key after 409 is a new intent requiring
+prove rollback. A claim with a retained result replays 202 regardless of cutoff; selected-policy refusal
+without result never authorizes rebinding. Timestamp-only refusal is not durable terminality. A new key after 409 is a new intent requiring
 explicit client/user policy, not automated recovery of the old operation (D04/D07).
+
+## D06 proof precedence and D04 expiry qualification
+
+Pending [D06](Signup%20Phase%20B%20D06%20Decision.md) distinguishes exact COMMIT_ACK
+from promise resolution and COMMIT_ROLLBACK. Only validated atomic T2 commit or a
+fresh matching authoritative immutable result latches accepted business proof.
+T1 reservation is not signup success. Once this request has valid accepted proof,
+catch/finally/rollback/end/release/Redis cleanup errors cannot change its generic
+202 conclusion. Delivery may fail after disconnect; durable outcome remains accepted.
+Cleanup health/alerts are separate. A fresh request still passes guards/rate/admission;
+this rule creates no bypass. Without proof, unknown/transient recovery failure is503,
+and a no-proof invariant/permission defect follows safe500 mapping.
+
+[D04](Signup%20Phase%20B%20D04%20Decision.md) is unresolved. Permanent 409 after durable
+terminalization (A) requires separately approved state/grants; timestamp-only B can
+return409 now and permit eligibility after backward clock correction. Neither a
+current-clock refusal nor a missing result proves rollback. T3 never writes an expiry
+fact: under A a timestamp-only miss without terminal proof stays503; under B a valid
+current refusal can be409. Existing accepted results replay before expiry checks.
+No schema, grants, public response activation or implemented T3 is claimed here.
 
 ## Enumeration and information boundaries
 
