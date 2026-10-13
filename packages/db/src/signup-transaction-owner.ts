@@ -124,6 +124,7 @@ export async function runOwnedSignupTransaction<T>(
   let fatal = false;
   let value: T | undefined;
   let commandTag: string | undefined;
+  let originalTransactionTimeout: string | undefined;
   let unregister = () => {};
   let workSettlement = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -233,6 +234,30 @@ export async function runOwnedSignupTransaction<T>(
     const beforeBegin = performance.now();
     arm(options.profile === 'recovery' ? 3000 : SIGNUP_SETUP_TIMEOUT_MS, 'SETUP_DEADLINE');
     record.phase = 'BEGINNING';
+    // PostgreSQL does not reschedule an already active positive transaction timer.
+    // Install the cap before BEGIN, preserving a stricter inherited session cap.
+    const inherited = (
+      await race(
+        query(
+          "SELECT current_setting('transaction_timeout') AS prior, " +
+            "(SELECT setting::integer FROM pg_settings WHERE name='transaction_timeout') AS timeout_ms",
+        ),
+      )
+    ).rows[0];
+    if (
+      !inherited ||
+      typeof inherited.prior !== 'string' ||
+      !Number.isSafeInteger(inherited.timeout_ms) ||
+      inherited.timeout_ms < 0
+    )
+      throw new SignupOwnerError('TRANSACTION_TIMEOUT_SETTINGS_INVALID');
+    originalTransactionTimeout = inherited.prior;
+    const target = options.profile === 'recovery' ? 3000 : SIGNUP_TRANSACTION_TIMEOUT_MS;
+    const transactionCap =
+      inherited.timeout_ms > 0 ? Math.min(inherited.timeout_ms, target) : target;
+    await race(
+      query("SELECT set_config('transaction_timeout', $1, false)", [String(transactionCap)]),
+    );
     if ((await race(query('BEGIN ISOLATION LEVEL READ COMMITTED'))).command !== 'BEGIN')
       throw new SignupOwnerError('BEGIN_TAG_INVALID');
     began = true;
@@ -242,7 +267,9 @@ export async function runOwnedSignupTransaction<T>(
       query(
         "SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true), " +
           "set_config('idle_in_transaction_session_timeout', $3, true), set_config('transaction_timeout', $4, true), set_config('synchronous_commit', 'on', true)",
-        recovery ? ['500', '1000', '1000', '3000'] : ['1000', '5000', '3000', '15000'],
+        recovery
+          ? ['500', '1000', '1000', String(transactionCap)]
+          : ['1000', '5000', '3000', String(transactionCap)],
       ),
     );
     arm(
@@ -315,6 +342,11 @@ export async function runOwnedSignupTransaction<T>(
       record.phase = 'DISPOSING';
       if (record.outcome === 'COMMIT_ACK' && !stopped && !fatal) {
         try {
+          await track(
+            query("SELECT set_config('transaction_timeout', $1, false)", [
+              originalTransactionTimeout!,
+            ]),
+          );
           connection.removeListener('error', onError);
           connection.release();
           transportSettled = true;
@@ -330,6 +362,12 @@ export async function runOwnedSignupTransaction<T>(
           const rollback = await track(query('ROLLBACK'));
           if (!Array.isArray(rollback) && rollback.command === 'ROLLBACK')
             record.outcome = 'ABORT_CONFIRMED';
+          if (record.outcome === 'ABORT_CONFIRMED')
+            await track(
+              query("SELECT set_config('transaction_timeout', $1, false)", [
+                originalTransactionTimeout!,
+              ]),
+            );
         } catch (error) {
           diagnose(error);
         }
@@ -388,6 +426,7 @@ export async function runSignupTransaction<T>(
 ): Promise<T> {
   const evidence = await runOwnedSignupTransaction(database, work, options);
   await evidence.workSettlement;
+  await evidence.settlement;
   if (evidence.outcome === 'COMMIT_ACK') return evidence.value as T;
   if (evidence.primary) throw evidence.primary.error;
   throw new SignupOwnerError('TRANSACTION_NOT_COMMITTED');

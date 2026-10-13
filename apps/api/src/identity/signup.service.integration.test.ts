@@ -116,13 +116,21 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
     'rolls back and replaces a session killed by the %s limit',
     async (limit) => {
       let pid = 0;
-      const running = runSignupTransaction(client, async (tx) => {
-        await setSignupTransactionTimeouts(tx);
+      const lifetimeUrl = new URL(testUrl);
+      lifetimeUrl.searchParams.set('options', '-c transaction_timeout=1000');
+      const lifetimeClient =
+        limit === 'lifetime'
+          ? createDatabaseClient({ connectionString: lifetimeUrl.toString() })
+          : undefined;
+      const running = runSignupTransaction(lifetimeClient ?? client, async (tx) => {
         const settings = await tx.execute(`SELECT pg_backend_pid() AS pid,
         current_setting('transaction_timeout') AS lifetime,
         current_setting('idle_in_transaction_session_timeout') AS idle`);
         pid = Number(settings.rows[0]!.pid);
-        expect(settings.rows[0]).toMatchObject({ lifetime: '15s', idle: '3s' });
+        expect(settings.rows[0]).toMatchObject({
+          lifetime: limit === 'lifetime' ? '1s' : '15s',
+          idle: '3s',
+        });
         const user = await new UserRepository(tx).create({
           email: 'limit@example.com',
           emailNormalized: 'limit@example.com',
@@ -135,14 +143,16 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
           // pg emits an unsolicited error while application work is paused.
           await new Promise((resolve) => setTimeout(resolve, 3_500));
         } else {
-          // Separate the server SQLSTATE test from the owner's 15s deadline race.
-          // Defaults were asserted above; shorten only this disposable session's
-          // lifetime so server 25P04 deterministically precedes owner cancellation.
-          await tx.execute("SET LOCAL transaction_timeout = '1s'");
+          // The disposable connection starts with a stricter 1s server cap.
+          // Owner setup preserves it, so server 25P04 precedes the 15s owner target.
           for (let n = 0; n < 100; n++) await tx.execute('SELECT pg_sleep(0.2)');
         }
       });
-      const failure: unknown = await running.catch((error: unknown) => error);
+      const failure: unknown = await running
+        .catch((error: unknown) => error)
+        .finally(async () => {
+          await lifetimeClient?.pool.end();
+        });
       // Require the server's exact termination reason, not any incidental failure.
       const expectedCode = limit === 'idle' ? '25P03' : '25P04';
       const codes: unknown[] = [];
@@ -374,7 +384,12 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
         ...args: unknown[]
       ) => {
         const result: unknown = Reflect.apply(originalQuery, pinned, [text, ...args]);
-        if (text !== 'ROLLBACK') return result;
+        if (
+          text !== "SELECT set_config('transaction_timeout', $1, false)" ||
+          !Array.isArray(args[0]) ||
+          args[0][0] !== baseline[0].lifetime
+        )
+          return result;
         return (result as Promise<unknown>).then(async (reply) => {
           rollbackSettings = (await originalQuery(settingsSql)).rows;
           return reply;
@@ -390,7 +405,7 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
         query.mockRestore();
       }
       expect(rollbackSettings).toEqual(baseline);
-      expect(releases).toEqual([true]);
+      expect(releases).toEqual([]); // Public disposal consumes ownership without a release notification.
       expect(removed).toHaveBeenCalledExactlyOnceWith(pinned);
       await expect(pinned.query('SELECT 1')).rejects.toThrow(/closed|not queryable/i);
 

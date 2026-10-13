@@ -200,6 +200,34 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     }
   }, 20_000);
 
+  it('S1 clamps an inherited longer transaction timeout before BEGIN and restores it after ACK', async () => {
+    const configured = new URL(target);
+    configured.searchParams.set('options', '-c transaction_timeout=30000');
+    const ownerPool = pool(configured, 1);
+    const database = { pool: ownerPool } as DatabaseClient;
+    const result = await runOwnedSignupTransaction(database, async (tx) => {
+      const settings = await tx.execute(
+        "SELECT current_setting('transaction_timeout') AS timeout, current_setting('transaction_isolation') AS isolation",
+      );
+      expect(settings.rows[0]).toMatchObject({ timeout: '15s', isolation: 'read committed' });
+      return 42;
+    });
+    await bounded(result.settlement, 'S1 settings restoration');
+    expect(result.outcome).toBe('COMMIT_ACK');
+    expect((await ownerPool.query('SHOW transaction_timeout')).rows[0].transaction_timeout).toBe(
+      '30s',
+    );
+    console.info(
+      JSON.stringify({
+        scenario: 'S1_SESSION_TIMEOUT_CAP',
+        inheritedMs: 30000,
+        transactionCapMs: 15000,
+        restoredMs: 30000,
+        outcome: result.outcome,
+      }),
+    );
+  });
+
   it('S1 stalls a real committed ACK until the recovery owner deadline without inferring rollback', async () => {
     const log = trace();
     const proxy = await commitAckProxy(target, log, 'stall');

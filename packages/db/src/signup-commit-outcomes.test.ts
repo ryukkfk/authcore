@@ -11,7 +11,7 @@ function fixture() {
     connection: { stream: new PassThrough() },
     query: vi.fn(async (command: string) => ({
       command: command.split(' ')[0]!,
-      rows: [] as unknown[],
+      rows: [{ prior: '0', timeout_ms: 0 }] as unknown[],
     })),
     release: vi.fn(),
     end: vi.fn(async () => {
@@ -31,7 +31,7 @@ describe('S1 corrected inherited owner regressions', () => {
     const { client, database } = fixture();
     client.query.mockImplementation(async (command) => ({
       command: command === 'COMMIT' ? 'ROLLBACK' : command.split(' ')[0]!,
-      rows: [],
+      rows: [{ prior: '0', timeout_ms: 0 }],
     }));
     await expect(
       runSignupTransaction(database, async () => 'unsafe-current-success'),
@@ -59,7 +59,7 @@ describe('S1 corrected inherited owner regressions', () => {
     const unknown = new Error('synthetic lost acknowledgement — no DB outcome evidence');
     client.query.mockImplementation(async (command) => {
       if (command === 'COMMIT') throw unknown;
-      return { command: command.split(' ')[0]!, rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     await expect(runSignupTransaction(database, async () => 42)).rejects.toBe(unknown);
     expect(
@@ -78,7 +78,7 @@ describe('S1 corrected inherited owner regressions', () => {
         await new Promise<never>((_resolve, reject) => {
           rejectCommit = reject;
         });
-      return { command: command.split(' ')[0]!, rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     let settled = false;
     const pending = runSignupTransaction(database, async () => 42).catch((error: unknown) => {
@@ -86,8 +86,7 @@ describe('S1 corrected inherited owner regressions', () => {
       return error;
     });
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(settled).toBe(true);
-    expect(await pending).toMatchObject({ code: 'TRANSACTION_DEADLINE' });
+    expect(settled).toBe(false); // Broken fixture query is still owned after local disposal.
     expect(client.release).not.toHaveBeenCalled();
     expect(client.connection.stream.destroyed).toBe(true);
     const late = new Error('late COMMIT transport rejection');
@@ -113,8 +112,8 @@ describe('S1 corrected inherited owner regressions', () => {
     expect(work).not.toHaveBeenCalled();
     expect(client.release).not.toHaveBeenCalled();
     deliver(client);
-    expect(await pending).toMatchObject({ code: 'ACQUIRE_DEADLINE' });
     await vi.advanceTimersByTimeAsync(0);
+    expect(await pending).toMatchObject({ code: 'ACQUIRE_DEADLINE' });
     expect(work).not.toHaveBeenCalled();
     expect(client.dispose).toHaveBeenCalledOnce();
     expect(client.query).not.toHaveBeenCalled();

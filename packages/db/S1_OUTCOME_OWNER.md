@@ -54,9 +54,10 @@ transaction 1s/5s/3s/15s normally and 500ms/1s/1s/3s for recovery.
 Timers revoke callback SQL capability and initiate actual driver disposal. They never
 fabricate settlement. If cleanup remains unresolved after its target, health stays
 QUARANTINED_WITH_OWNER; settlement and the registry expose continued ownership.
-Callbacks may retain non-SQL work: the compatibility API waits for `workSettlement`
-before returning so existing admission cannot release while callback work continues.
-Detailed service callers must do the same before releasing work admission. Event-loop
+Callbacks may retain non-SQL work: the compatibility API waits for both `workSettlement` and owner `settlement`
+before returning so existing admission cannot release while work or local transport
+ownership continues. Detailed service callers may inspect a bounded outcome envelope,
+but must retain admission until both settle; responding does not release ownership. Event-loop
 stalls, native work and unresolved transport setup preclude whole-request hard bounds.
 
 The Drizzle adapter serializes and observes submitted queries. It exposes only execute,
@@ -82,9 +83,14 @@ quarantined cleanup, stale adapters and proof retention. Required PostgreSQL tes
 include exact tags and independent committed-marker witnesses, actual cancelled pool
 waiters, and a proxy that withholds COMMIT ACK while keeping transport open.
 
-The server lifetime SQLSTATE regression asserts the 15s configured default, then uses
-a shorter session-local lifetime to deterministically observe 25P04 before the owner's
-15s timer. It does not assert which equal-deadline mechanism wins. The proxy recovery
+The server lifetime SQLSTATE regression starts a disposable connection with a stricter
+1s timeout and proves that owner setup preserves it, observing 25P04 before the 15s
+owner target. PostgreSQL 17 does not reschedule an active positive transaction timeout
+when its setting changes to another positive value. Therefore the owner captures the
+original session setting, installs its cap before BEGIN, and restores the original
+after a healthy ACK or confirmed rollback. A stricter inherited cap is preserved.
+Restoration is cleanup; its failure cannot erase COMMIT_ACK. A real test covers a
+30s inherited setting clamped to 15s and restored before healthy reuse. It does not assert which equal-deadline mechanism wins. The proxy recovery
 case separately measures the real 3s owner deadline with a committed server witness.
 
 Exact-head CI and the remaining adversarial tests must pass before S1 acceptance.

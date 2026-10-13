@@ -1,7 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseClient } from './client.js';
-import { runOwnedSignupTransaction, type SignupTransaction } from './signup-transaction-owner.js';
+import {
+  runOwnedSignupTransaction,
+  runSignupTransaction,
+  type SignupTransaction,
+} from './signup-transaction-owner.js';
 import {
   AcceptedProofLatch,
   deferred,
@@ -13,7 +17,7 @@ function fixture() {
   const client = Object.assign(new EventEmitter(), {
     query: vi.fn(async (command: string | { text: string }) => ({
       command: (typeof command === 'string' ? command : command.text).split(' ')[0]!,
-      rows: [],
+      rows: [{ prior: '0', timeout_ms: 0 }],
     })),
     release: vi.fn(),
     dispose: vi.fn(async () => ({
@@ -28,6 +32,53 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 describe('S1 evidence and owned cancellation', () => {
+  it('compatibility callers retain admission while quarantined disposal remains unsettled', async () => {
+    vi.useFakeTimers();
+    const { database, client } = fixture();
+    const gate = deferred<Awaited<ReturnType<typeof client.dispose>>>();
+    client.dispose.mockReturnValue(gate.promise);
+    const failure = new Error('work');
+    let settled = false;
+    const pending = runSignupTransaction(database, async () => {
+      throw failure;
+    }).catch((error) => {
+      settled = true;
+      return error;
+    });
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(settled).toBe(false);
+    expect(signupOwnerInventory(database)).toHaveLength(1);
+    gate.resolve({ removed: true, transportSettled: true, diagnostics: [] });
+    expect(await pending).toBe(failure);
+    expect(signupOwnerInventory(database)).toEqual([]);
+  });
+  it.each([0, 1000, 30000])(
+    'installs a bounded session timeout before BEGIN and restores inherited %s ms',
+    async (inherited) => {
+      const { database, client } = fixture();
+      client.query.mockImplementation(async (text) => ({
+        command: String(text).split(' ')[0]!,
+        rows: [{ prior: String(inherited), timeout_ms: inherited }],
+      }));
+      const result = await runOwnedSignupTransaction(database, async () => 42);
+      await result.settlement;
+      const calls = client.query.mock.calls as unknown as [string, string[] | undefined][];
+      const installing = calls.findIndex(
+        ([q, v]) =>
+          q === "SELECT set_config('transaction_timeout', $1, false)" &&
+          v?.[0] === String(inherited > 0 ? Math.min(inherited, 15000) : 15000),
+      );
+      const begin = calls.findIndex(([q]) => q.startsWith('BEGIN'));
+      expect(installing).toBeGreaterThan(-1);
+      expect(installing).toBeLessThan(begin);
+      expect(calls.at(-1)).toEqual([
+        "SELECT set_config('transaction_timeout', $1, false)",
+        [String(inherited)],
+      ]);
+      expect(result.outcome).toBe('COMMIT_ACK');
+      expect(client.release).toHaveBeenCalledOnce();
+    },
+  );
   it('cancellation revokes a paused callback before any resumed SQL and retains its work', async () => {
     const { database, client } = fixture();
     const controller = new AbortController();
@@ -61,7 +112,7 @@ describe('S1 evidence and owned cancellation', () => {
     const controller = new AbortController();
     client.query.mockImplementation(async (text) => {
       if (text === 'COMMIT') controller.abort();
-      return { command: String(text).split(' ')[0]!, rows: [] };
+      return { command: String(text).split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     const result = await runOwnedSignupTransaction(database, async () => 42, {
       signal: controller.signal,
@@ -74,18 +125,18 @@ describe('S1 evidence and owned cancellation', () => {
   it('recovery budget starts before BEGIN rather than restarting after setup', async () => {
     vi.useFakeTimers();
     const { database, client } = fixture();
-    const begin = deferred<{ command: string; rows: never[] }>();
+    const begin = deferred<{ command: string; rows: { prior: string; timeout_ms: number }[] }>();
     const work = deferred<number>();
     client.query.mockImplementation(async (text) =>
       text === 'BEGIN ISOLATION LEVEL READ COMMITTED'
         ? begin.promise
-        : { command: String(text).split(' ')[0]!, rows: [] },
+        : { command: String(text).split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] },
     );
     const pending = runOwnedSignupTransaction(database, () => work.promise, {
       profile: 'recovery',
     });
     await vi.advanceTimersByTimeAsync(2000);
-    begin.resolve({ command: 'BEGIN', rows: [] });
+    begin.resolve({ command: 'BEGIN', rows: [{ prior: '0', timeout_ms: 0 }] });
     await vi.advanceTimersByTimeAsync(999);
     expect(client.dispose).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -123,7 +174,7 @@ describe('S1 evidence and owned cancellation', () => {
       const { client, database } = fixture();
       client.query.mockImplementation(async (text) => ({
         command: text === 'COMMIT' ? tag : String(text).split(' ')[0]!,
-        rows: [],
+        rows: [{ prior: '0', timeout_ms: 0 }],
       }));
       const result = await runOwnedSignupTransaction(database, async () => 42);
       expect(result.outcome).toBe(
@@ -163,7 +214,7 @@ describe('S1 evidence and owned cancellation', () => {
     const error = new Error('lost ACK');
     client.query.mockImplementation(async (text) => {
       if (text === 'COMMIT') throw error;
-      return { command: String(text).split(' ')[0]!, rows: [] };
+      return { command: String(text).split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     const result = await runOwnedSignupTransaction(database, async () => 42);
     expect(result).toMatchObject({ outcome: 'COMMIT_UNKNOWN', primary: { error } });
@@ -219,9 +270,11 @@ describe('S1 evidence and owned cancellation', () => {
   it('stalled COMMIT reaches the transaction target, owns query rejection and stays unknown', async () => {
     vi.useFakeTimers();
     const { database, client } = fixture();
-    const gate = deferred<{ command: string; rows: never[] }>();
+    const gate = deferred<{ command: string; rows: { prior: string; timeout_ms: number }[] }>();
     client.query.mockImplementation(async (text) =>
-      text === 'COMMIT' ? gate.promise : { command: String(text).split(' ')[0]!, rows: [] },
+      text === 'COMMIT'
+        ? gate.promise
+        : { command: String(text).split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] },
     );
     client.dispose.mockImplementation(async () => {
       gate.reject(new Error('transport closed'));

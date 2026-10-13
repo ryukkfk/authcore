@@ -19,7 +19,7 @@ function setup() {
       connection: { stream: new PassThrough() },
       query: vi.fn(async (command: string) => {
         if (command === 'ROLLBACK') throw new Error('rollback failed');
-        return { command: command.split(' ')[0]!, rows: [] };
+        return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
       }),
       end: vi.fn(() => new Promise<void>(() => {})),
       release: vi.fn(),

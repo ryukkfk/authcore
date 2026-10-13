@@ -150,9 +150,9 @@ jobs:
             const result = JSON.parse(readFileSync("packages/db/s0-results.json", "utf8"));
             const tests = result.testResults.flatMap(file => file.assertionResults);
             assert.equal(result.success, true);
-            assert.equal(tests.length, 13);
+            assert.equal(tests.length, 14);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S1_REAL_OUTCOMES total=13 passed=13 skipped=0");
+            console.log("S1_REAL_OUTCOMES total=14 passed=14 skipped=0");
           '
 
       - name: Redis integration tests

@@ -13,7 +13,10 @@ function setup() {
     connection: { stream: new PassThrough() },
     query: vi
       .fn<(command: string) => Promise<{ command: string; rows: unknown[] }>>()
-      .mockImplementation(async (command) => ({ command: command.split(' ')[0]!, rows: [] })),
+      .mockImplementation(async (command) => ({
+        command: command.split(' ')[0]!,
+        rows: [{ prior: '0', timeout_ms: 0 }],
+      })),
     release: vi.fn(),
     end: vi.fn(async () => {
       connection.emit('end');
@@ -72,7 +75,7 @@ describe('signup transaction error precedence and teardown', () => {
       const primary = Object.assign(new Error('primary SQL failure'), { code: '57014' });
       connection.query.mockImplementation(async (command) => {
         if (command.split(' ')[0] === stage) throw primary;
-        return { command: command.split(' ')[0]!, rows: [] };
+        return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
       });
       await expect(
         runSignupTransaction(database, async () => {
@@ -96,7 +99,7 @@ describe('signup transaction error precedence and teardown', () => {
         );
         throw new Error('rollback failed');
       }
-      return { command: command.split(' ')[0]!, rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     await expect(
       runSignupTransaction(database, async () => {
@@ -149,7 +152,7 @@ describe('signup transaction error precedence and teardown', () => {
     const primary = new Error('application failure');
     connection.query.mockImplementation(async (command) => {
       if (command === 'ROLLBACK') throw new Error('rollback failed');
-      return { command: command.split(' ')[0]!, rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     connection.end.mockImplementation(() => new Promise(() => {}));
     let settled = false;
@@ -174,7 +177,7 @@ describe('signup transaction error precedence and teardown', () => {
       const primary = new Error('application failure');
       connection.query.mockImplementation(async (command) => {
         if (command === 'ROLLBACK') throw new Error('rollback failed');
-        return { command: command.split(' ')[0]!, rows: [] };
+        return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
       });
       if (mode === 'synchronous')
         connection.end.mockImplementation(() => {
@@ -233,7 +236,7 @@ describe('signup transaction error precedence and teardown', () => {
           });
         });
       }
-      return { command: command.split(' ')[0]!, rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     const pending = runSignupTransaction(database, async () => {
       throw primary;
@@ -277,7 +280,7 @@ describe('signup transaction error precedence and teardown', () => {
       async query(command: string) {
         if (this.closed) throw new Error('Client was closed and is not queryable');
         if (command === 'ROLLBACK') throw new Error('rollback transport error');
-        return { command: command.split(' ')[0]!, rows: [] };
+        return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
       }
       terminate() {
         return new Promise((resolve) => {
