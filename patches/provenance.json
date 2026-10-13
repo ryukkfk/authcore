@@ -15,9 +15,9 @@
     "upstreamGitHead": "544b1ce8152bc280e398dc1e8a66920abe6a640e",
     "officialTarball": "https://registry.npmjs.org/pg-pool/-/pg-pool-3.14.0.tgz",
     "patch": "patches/pg-pool@3.14.0.patch",
-    "patchSha256": "1d7975ca58804e74ddabf2d7d78dfcc4bae6a7f82d5fa431080e823b511798d2",
+    "patchSha256": "0d6f08bf61875238f4798504cc92c6a59e96ab2a70be118d9b0395ad824389ca",
     "source": "index.js",
-    "installedSha256": "3fce9f04c23f5f24387dd2ab957143e33f3e4ca0d6d2c245da93d6ff1f3c98b3",
+    "installedSha256": "c76127d17c58072aca5294a155a77a1fd2a3cf7e40b9e0e72e01e709a5bfb590",
     "license": "MIT",
     "licenseSha256": "4f15ee7fc2a72082859d7e0d12dfa4bcdd70b1c744ad3850d07780730ac08557"
   }

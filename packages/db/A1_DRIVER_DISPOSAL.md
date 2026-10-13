@@ -93,12 +93,22 @@ idempotency, release/remove exceptions, simultaneous faults, async/non-Error obs
 diagnostic failures, queue pressure, pending onConnect, connection rejection/timeout,
 late acquisition, close timeout, repeated callbacks, reentrancy and shutdown. These are
 synthetic transport schedules and make no PostgreSQL outcome claim.
+Acquisition observers that consume release/disposal cannot deliver a checkout. The
+legacy verify callback runs as owned setup after onConnect; synchronous failures and
+shutdown while verification is pending cannot strand or deliver late ownership.
 
 `driver-disposal.integration.test.ts` runs only in explicitly approved disposable
 GitHub-hosted PostgreSQL 17 infrastructure. It verifies exact COMMIT tags, fresh
 independent committed-marker proof, failed-checkout backend absence, replacement waiter
 progress and in-flight query rejection. It inventories databases, roles, schemas and
 owned sessions before/after and drops only its UUID-owned database without FORCE.
+The active-query case first witnesses PgSleep on the server and verifies a 2s session
+statement_timeout. Local rejection and eventual remote backend absence are separate
+assertions. The initial CI run exposed an incorrect fixture assumption: socket close
+does not promptly stop a running PostgreSQL query when disconnect polling is disabled.
+The server timeout bounds the fixture's work; the driver receipt does not make that
+guarantee. See PostgreSQL 17 [disconnect polling](https://www.postgresql.org/docs/17/runtime-config-connection.html#GUC-CLIENT-CONNECTION-CHECK-INTERVAL)
+and [statement timeout](https://www.postgresql.org/docs/17/runtime-config-client.html#GUC-STATEMENT-TIMEOUT).
 Required cases must run with zero skips in their dedicated CI step. Ordinary integration
 invocation skips this explicitly gated suite; those skips do not count as acceptance.
 

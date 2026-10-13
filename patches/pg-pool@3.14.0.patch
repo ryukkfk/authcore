@@ -1,5 +1,5 @@
 diff --git a/index.js b/index.js
-index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17fa594685e 100644
+index ab514fa88f0e2f37eaf19c25c54d527a28675a12..7b9bfb49d3bbad904c3e2e667b869307e07dae85 100644
 --- a/index.js	
 +++ b/index.js	
 @@ -91,7 +91,15 @@ class Pool extends EventEmitter {
@@ -19,7 +19,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
      this.Client = this.options.Client || Client || require('pg').Client
      this.Promise = this.options.Promise || global.Promise
  
-@@ -103,6 +111,10 @@ class Pool extends EventEmitter {
+@@ -103,6 +111,11 @@ class Pool extends EventEmitter {
      this._idle = []
      this._expired = new WeakSet()
      this._pendingQueue = []
@@ -27,10 +27,11 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
 +    this._removed = new WeakMap()
 +    this._diagnostics = []
 +    this._connectingOwners = new Map()
++    this._acquiring = new WeakSet()
      this._endCallback = undefined
      this.ending = false
      this.ended = false
-@@ -117,7 +129,33 @@ class Pool extends EventEmitter {
+@@ -117,7 +130,33 @@ class Pool extends EventEmitter {
    }
  
    _isFull() {
@@ -65,7 +66,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
    }
  
    _isAboveMin() {
-@@ -132,12 +170,18 @@ class Pool extends EventEmitter {
+@@ -132,12 +171,18 @@ class Pool extends EventEmitter {
      }
      if (this.ending) {
        this.log('pulse queue on ending')
@@ -85,7 +86,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
          this.ended = true
          this._endCallback()
        }
-@@ -169,7 +213,15 @@ class Pool extends EventEmitter {
+@@ -169,7 +214,15 @@ class Pool extends EventEmitter {
      throw new Error('unexpected condition')
    }
  
@@ -102,7 +103,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
      const removed = removeWhere(this._idle, (item) => item.client === client)
  
      if (removed !== undefined) {
-@@ -177,14 +229,41 @@ class Pool extends EventEmitter {
+@@ -177,14 +230,41 @@ class Pool extends EventEmitter {
      }
  
      this._clients = this._clients.filter((c) => c !== client)
@@ -151,7 +152,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
    }
  
    connect(cb) {
-@@ -240,6 +319,7 @@ class Pool extends EventEmitter {
+@@ -240,6 +320,7 @@ class Pool extends EventEmitter {
    newClient(pendingItem) {
      const client = new this.Client(this.options)
      this._clients.push(client)
@@ -159,7 +160,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
      const idleListener = makeIdleListener(this, client)
  
      this.log('checking client timeout')
-@@ -268,10 +348,12 @@ class Pool extends EventEmitter {
+@@ -268,10 +349,12 @@ class Pool extends EventEmitter {
          clearTimeout(tid)
        }
        client.on('error', idleListener)
@@ -173,7 +174,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
          if (timeoutHit) {
            err = new Error('Connection terminated due to connection timeout', { cause: err })
          }
-@@ -284,6 +366,13 @@ class Pool extends EventEmitter {
+@@ -284,20 +367,28 @@ class Pool extends EventEmitter {
          }
        } else {
          this.log('new client connected')
@@ -185,9 +186,15 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
 +          return
 +        }
  
-         if (this.options.onConnect) {
-           this._promiseTry(() => this.options.onConnect(client)).then(
-@@ -291,13 +380,10 @@ class Pool extends EventEmitter {
+-        if (this.options.onConnect) {
+-          this._promiseTry(() => this.options.onConnect(client)).then(
++        if (this.options.onConnect || this.options.verify) {
++          const setup = this._promiseTry(() => this.options.onConnect && this.options.onConnect(client))
++          const verified = this.options.verify ? setup.then(() => new this.Promise((resolve, reject) => {
++            this.options.verify(client, err => err ? reject(err) : resolve())
++          })) : setup
++          verified.then(
+             () => {
                this._afterConnect(client, pendingItem, idleListener)
              },
              (hookErr) => {
@@ -205,7 +212,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
              }
            )
            return
-@@ -309,6 +395,13 @@ class Pool extends EventEmitter {
+@@ -309,6 +400,13 @@ class Pool extends EventEmitter {
    }
  
    _afterConnect(client, pendingItem, idleListener) {
@@ -219,7 +226,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
      if (this.options.maxLifetimeSeconds !== 0) {
        const maxLifetimeTimeout = setTimeout(() => {
          this.log('ending client due to expired lifetime')
-@@ -333,14 +426,17 @@ class Pool extends EventEmitter {
+@@ -333,41 +431,36 @@ class Pool extends EventEmitter {
  
    // acquire a client for a pending work item
    _acquireClient(client, pendingItem, idleListener, isNew) {
@@ -228,11 +235,13 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
 +    this._connectingOwners.delete(client)
 +    const diagnostics = []
 +    client.release = this._releaseOnce(client, idleListener, diagnostics)
++    this._acquiring.add(client)
 +    const fault = (isNew && this._notify('connect', diagnostics, client)) ||
 +      this._notify('acquire', diagnostics, client)
-+    if (fault || this.ending || pendingItem.timedOut) {
++    this._acquiring.delete(client)
++    if (fault || this.ending || pendingItem.timedOut || this._removed.has(client)) {
 +      client.dispose()
-+      if (!pendingItem.timedOut) pendingItem.callback(fault || new Error('Pool ended before checkout'), undefined, NOOP)
++      if (!pendingItem.timedOut) pendingItem.callback(fault || new Error('Checkout ended before delivery'), undefined, NOOP)
 +      return
      }
  
@@ -241,9 +250,28 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
 -    client.release = this._releaseOnce(client, idleListener)
 -
      client.removeListener('error', idleListener)
- 
-     if (!pendingItem.timedOut) {
-@@ -366,8 +462,18 @@ class Pool extends EventEmitter {
+-
+-    if (!pendingItem.timedOut) {
+-      if (isNew && this.options.verify) {
+-        this.options.verify(client, (err) => {
+-          if (err) {
+-            client.release(err)
+-            return pendingItem.callback(err, undefined, NOOP)
+-          }
+-
+-          pendingItem.callback(undefined, client, client.release)
+-        })
+-      } else {
+-        pendingItem.callback(undefined, client, client.release)
+-      }
+-    } else {
+-      if (isNew && this.options.verify) {
+-        this.options.verify(client, client.release)
+-      } else {
+-        client.release()
+-      }
+-    }
++    pendingItem.callback(undefined, client, client.release)
    }
  
    // returns a function that wraps _release and throws if called more than once
@@ -263,7 +291,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
  
      return (err) => {
        if (released) {
-@@ -375,18 +481,30 @@ class Pool extends EventEmitter {
+@@ -375,18 +468,31 @@ class Pool extends EventEmitter {
        }
  
        released = true
@@ -294,10 +322,11 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
 +    }
 +    // A lifecycle observer may synchronously call its checkout's public dispose.
 +    if (this._removed.has(client)) return
++    if (this._acquiring.has(client)) return this._remove(client, undefined, diagnostics, true)
  
      // TODO(bmc): expose a proper, public interface _queryable and _ending
      if (err || this.ending || !client._queryable || client._ending || client._poolUseCount >= this.options.maxUses) {
-@@ -457,7 +575,9 @@ class Pool extends EventEmitter {
+@@ -457,7 +563,9 @@ class Pool extends EventEmitter {
            return
          }
          clientReleased = true
@@ -308,7 +337,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
          cb(err)
        }
  
-@@ -471,14 +591,21 @@ class Pool extends EventEmitter {
+@@ -471,14 +579,21 @@ class Pool extends EventEmitter {
              return
            }
            clientReleased = true
@@ -332,7 +361,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
          return cb(err)
        }
      })
-@@ -494,6 +621,15 @@ class Pool extends EventEmitter {
+@@ -494,6 +609,15 @@ class Pool extends EventEmitter {
      this.ending = true
      const promised = promisify(this.Promise, cb)
      this._endCallback = promised.callback
@@ -348,7 +377,7 @@ index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17f
      this._pulseQueue()
      return promised.result
    }
-@@ -502,6 +638,18 @@ class Pool extends EventEmitter {
+@@ -502,6 +626,18 @@ class Pool extends EventEmitter {
      return this._pendingQueue.length
    }
  

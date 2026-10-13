@@ -111,6 +111,11 @@ describe.skipIf(!approved)('A1 real PostgreSQL ownership and transport receipts'
       for (const pool of pools) await bounded(pool.end(), 'A1 pool end');
       for (const client of witnesses) await bounded(client.end(), 'A1 witness end');
       if (created) {
+        // Local close is not a remote-backend termination acknowledgement.
+        const deadline = performance.now() + 5000;
+        while ((await inventory()).sessions.length && performance.now() < deadline) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        }
         expect((await inventory()).sessions).toEqual([]);
         await admin.query('DROP DATABASE "' + name + '"');
       }
@@ -167,10 +172,12 @@ describe.skipIf(!approved)('A1 real PostgreSQL ownership and transport receipts'
       );
     },
   );
-  it('disposal settles an in-flight query rejection before shutdown; no SQL success is invented', async () => {
+  it('local disposal settles query rejection; server timeout separately bounds backend work', async () => {
     const { pool, client } = await checkout();
     const observer = await witness();
     const pid = (await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    await client.query("SET statement_timeout = '2s'");
+    expect((await client.query('SHOW statement_timeout')).rows[0].statement_timeout).toBe('2s');
     let querySettled = false;
     const query = client.query('SELECT pg_sleep(30)').then(
       () => 'unexpected-success',
@@ -179,11 +186,37 @@ describe.skipIf(!approved)('A1 real PostgreSQL ownership and transport receipts'
         return 'rejected';
       },
     );
+    // Establish actual server execution before transport disposal, not just submission.
+    const deadline = performance.now() + 1000;
+    let running = false;
+    while (performance.now() < deadline) {
+      const state = await observer.query(
+        "SELECT pid FROM pg_stat_activity WHERE pid=$1 AND state='active' AND wait_event='PgSleep'",
+        [pid],
+      );
+      if (state.rowCount === 1) {
+        running = true;
+        break;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+    expect(running).toBe(true);
     const receipt = await bounded(client.dispose(), 'A1 active query disposal');
     expect(receipt.transportSettled).toBe(true);
     expect(querySettled).toBe(true);
     expect(await query).toBe('rejected');
     await absent(observer, pid);
     expect(pool.totalCount).toBe(0);
+    console.info(
+      JSON.stringify({
+        scope: 'A1',
+        scenario: 'in-flight',
+        serverExecutionWitness: true,
+        localQueryRejected: true,
+        serverStatementTimeoutMs: 2000,
+        backendAbsent: true,
+        transactionOutcome: 'not inferred from disposal',
+      }),
+    );
   });
 });

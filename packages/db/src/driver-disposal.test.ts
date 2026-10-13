@@ -71,6 +71,54 @@ afterEach(() => {
 });
 
 describe('A1 driver-owned disposal acceptance, synthetic transport', () => {
+  it.each(['release', 'dispose'] as const)(
+    'acquire observer %s cannot deliver a consumed checkout',
+    async (action) => {
+      const pool = createPool();
+      pool.once('acquire', (client) => {
+        (client as OwnedClient)[action]();
+      });
+      const result = await pool.connect().catch((error: unknown) => error);
+      expect(result).toBeInstanceOf(Error);
+      expect(pool.idleCount).toBe(0);
+      await pool.end();
+    },
+  );
+  it('shutdown retains pending verify ownership and prevents late checkout', async () => {
+    let finish!: (error?: Error) => void;
+    const pool = new Pool({
+      Client: Transport as unknown as typeof Client,
+      max: 1,
+      verify: (_client: unknown, done: (error?: Error) => void) => {
+        finish = done;
+      },
+    } as ConstructorParameters<typeof Pool>[0]);
+    const pending = pool.connect().catch((error: unknown) => error);
+    await Promise.resolve();
+    let ended = false;
+    const ending = pool.end().then(() => {
+      ended = true;
+    });
+    await Promise.resolve();
+    expect(ended).toBe(false);
+    finish();
+    expect(await pending).toBeInstanceOf(Error);
+    await ending;
+    expect(pool.totalCount).toBe(0);
+  });
+  it('synchronous verify throw rejects and disposes instead of losing setup ownership', async () => {
+    const fault = new Error('verify failed');
+    const pool = new Pool({
+      Client: Transport as unknown as typeof Client,
+      max: 1,
+      verify: () => {
+        throw fault;
+      },
+    } as ConstructorParameters<typeof Pool>[0]);
+    await expect(pool.connect()).rejects.toBe(fault);
+    await pool.end();
+    expect(Transport.instances[0]!.closed).toBe(true);
+  });
   it('release-listener exception cannot strand the consumed checkout', async () => {
     const pool = createPool();
     const client = (await pool.connect()) as OwnedClient;
