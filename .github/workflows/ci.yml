@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/signup-s1-transaction-owner
   pull_request:
     branches:
       - main
@@ -74,12 +75,6 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
-      - name: Test
-        run: pnpm test
-
-      - name: PostgreSQL integration tests
-        run: pnpm --filter @authcore/db test:integration
-
       - name: S0 real PostgreSQL outcome verification
         env:
           S0_POSTGRES_APPROVED: 'true'
@@ -100,6 +95,12 @@ jobs:
             assert(tests.every(test => test.status === "passed"));
             console.log("S0_REAL_VERIFICATION total=9 passed=9 skipped=0");
           '
+
+      - name: Test
+        run: pnpm test
+
+      - name: PostgreSQL integration tests
+        run: pnpm --filter @authcore/db test:integration
 
       - name: Redis integration tests
         run: pnpm --filter @authcore/api test:redis

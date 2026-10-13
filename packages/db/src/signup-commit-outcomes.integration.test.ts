@@ -262,7 +262,7 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     evidence('S0-02', log);
   });
 
-  it('S0-03 KNOWN GAP: real ROLLBACK COMMIT-tag is accepted by current owner', async () => {
+  it('S0-03 S1 regression: real ROLLBACK COMMIT-tag rejects callback success', async () => {
     const log = trace();
     const ownerPool = pool();
     const client = await ownerPool.connect();
@@ -270,13 +270,13 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     const marker = randomUUID();
     captureCommit(client, log);
     const database = { pool: { connect: async () => client } } as unknown as DatabaseClient;
-    const result = await runSignupTransaction(database, async () => {
+    const pending = runSignupTransaction(database, async () => {
       await client.query('INSERT INTO public.s0_markers VALUES ($1)', [marker]);
       await expect(client.query('SELECT 1 / 0')).rejects.toMatchObject({ code: '22012' });
       log.add('swallowed_server_ErrorResponse', '22012');
       return 'current_false_success';
     });
-    expect(result).toBe('current_false_success');
+    await expect(pending).rejects.toBeInstanceOf(Error);
     expect(log.events.find((event) => event.event === 'owner_COMMIT_query_resolved')?.detail).toBe(
       'ROLLBACK',
     );
@@ -284,7 +284,7 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     evidence('S0-03', log);
   });
 
-  it('S0-04 KNOWN GAP: release fault rejects despite acknowledged durable COMMIT', async () => {
+  it('S0-04 S1 regression: release fault preserves acknowledged durable COMMIT', async () => {
     const log = trace();
     const ownerPool = pool();
     const client = await ownerPool.connect();
@@ -306,15 +306,15 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
             return 'accepted';
           },
         ),
-      ).rejects.toBe(failure);
-      log.add('owner_rejected_cleanup_error');
+      ).resolves.toBe('accepted');
+      log.add('owner_preserved_acknowledged_commit');
       expect(
         log.events.find((event) => event.event === 'owner_COMMIT_query_resolved')?.detail,
       ).toBe('COMMIT');
       await assertMarker(witness, marker, true, log);
       expect(ownerPool.idleCount).toBe(0);
       // Throw-before-release leaves pool checkout owned; test must dispose it explicitly.
-      expect(ownerPool.totalCount).toBe(1);
+      expect(ownerPool.totalCount).toBe(0);
       log.add('pool_checkout_retained_after_release_throw');
       evidence('S0-04', log);
     } finally {

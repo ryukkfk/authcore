@@ -22,7 +22,7 @@ function fixture() {
 afterEach(() => vi.useRealTimers());
 
 describe('S0 current owner characterization — simulated transport, no PostgreSQL oracle', () => {
-  it('S0-03 KNOWN GAP: resolves work even when COMMIT resolves with ROLLBACK tag', async () => {
+  it('S1-01 rejects callback success when COMMIT resolves with ROLLBACK tag', async () => {
     const { client, database } = fixture();
     client.query.mockImplementation(async (command) => ({
       command: command === 'COMMIT' ? 'ROLLBACK' : command,
@@ -30,17 +30,17 @@ describe('S0 current owner characterization — simulated transport, no PostgreS
     }));
     await expect(
       runSignupTransaction(database, async () => 'unsafe-current-success'),
-    ).resolves.toBe('unsafe-current-success');
-    expect(client.release).toHaveBeenCalledExactlyOnceWith();
+    ).rejects.toBeInstanceOf(Error);
+    expect(client.release).toHaveBeenCalledExactlyOnceWith(true);
     // Desired S1: classify definite abort, never accept this tag as success.
   });
-  it('S0-04 KNOWN GAP: acknowledged COMMIT followed by release throw rejects the caller', async () => {
+  it('S1-02 acknowledged COMMIT survives release failure', async () => {
     const { client, database } = fixture();
     const cleanup = new Error('synthetic post-ACK release failure');
     client.release.mockImplementation(() => {
       throw cleanup;
     });
-    await expect(runSignupTransaction(database, async () => 'accepted')).rejects.toBe(cleanup);
+    await expect(runSignupTransaction(database, async () => 'accepted')).resolves.toBe('accepted');
     expect(client.query.mock.calls.map(([command]) => command)).toEqual(['BEGIN', 'COMMIT']);
     expect(client.end).toHaveBeenCalledOnce();
     // Desired S1: proven-success latch survives cleanup, while transport is disposed.
