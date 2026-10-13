@@ -4,3 +4,8 @@ packages:
 allowBuilds:
   argon2: false
   esbuild: false
+overrides:
+  pg-pool: 3.14.0
+patchedDependencies:
+  pg-pool@3.14.0: patches/pg-pool@3.14.0.patch
+  pg@8.23.1: patches/pg@8.23.1.patch

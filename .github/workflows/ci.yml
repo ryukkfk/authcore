@@ -4,10 +4,14 @@ on:
   push:
     branches:
       - main
+      - fix/pg-pool-a1-owned-disposal
       - feat/signup-s1-transaction-owner
+      - feat/signup-s1-outcome-owner
   pull_request:
     branches:
       - main
+      - test/signup-s0-commit-outcomes
+      - fix/pg-pool-a1-owned-disposal
 
 permissions:
   contents: read
@@ -65,6 +69,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: A1 driver patch integrity
+        run: node scripts/verify-driver-patches.mjs
+
       - name: Lint
         run: pnpm lint
 
@@ -74,6 +81,27 @@ jobs:
 
       - name: Type check
         run: pnpm typecheck
+
+      - name: A1 real PostgreSQL driver disposal
+        env:
+          A1_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -n "$TEST_DATABASE_URL"
+          test -z "${DATABASE_URL:-}"
+          pnpm --filter @authcore/db test:integration src/driver-disposal.integration.test.ts --reporter=verbose --reporter=json --outputFile.json=a1-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("packages/db/a1-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 3);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("A1_REAL_POSTGRES total=3 passed=3 skipped=0");
+          '
 
       - name: S1 pool ownership prerequisite characterization
         env:
@@ -96,6 +124,12 @@ jobs:
             console.log("S1_POOL_PREREQUISITE_BLOCKER_REPRODUCED total=1 passed=1 skipped=0; S1 remains BLOCKED");
           '
 
+      - name: Test
+        run: pnpm test
+
+      - name: PostgreSQL integration tests
+        run: pnpm --filter @authcore/db test:integration
+
       - name: S0 real PostgreSQL outcome verification
         env:
           S0_POSTGRES_APPROVED: 'true'
@@ -116,12 +150,6 @@ jobs:
             assert(tests.every(test => test.status === "passed"));
             console.log("S0_REAL_VERIFICATION total=9 passed=9 skipped=0");
           '
-
-      - name: Test
-        run: pnpm test
-
-      - name: PostgreSQL integration tests
-        run: pnpm --filter @authcore/db test:integration
 
       - name: Redis integration tests
         run: pnpm --filter @authcore/api test:redis

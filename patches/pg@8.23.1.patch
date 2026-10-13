@@ -1,0 +1,42 @@
+diff --git a/lib/client.js b/lib/client.js
+index 2b13c1de74ce2742e521eb2ef71803b1da579439..3c249a4e7208c05ab5a303eab9056747b9dba68c 100644
+--- a/lib/client.js	
++++ b/lib/client.js	
+@@ -796,6 +796,37 @@ class Client extends EventEmitter {
+     return this._txStatus
+   }
+ 
++  // AuthCore A1: terminal local transport/query ownership, never a COMMIT outcome.
++  // Only the pure JS Node transport is supported by this explicit extension.
++  terminate() {
++    if (this._termination) return this._termination
++    this._ending = true
++    this._queryable = false
++    if (this._connecting && this._connectionCallback) {
++      const callback = this._connectionCallback
++      this._connectionCallback = null
++      this._connectionError = true
++      process.nextTick(() => callback(new Error('Connection setup terminated by owner')))
++    }
++    const stream = this.connection.stream
++    this._termination = new this._Promise((resolve, reject) => {
++      const closed = () => {
++        this._errorAllQueries(new Error('Client terminated by owner'))
++        // Query callbacks are queued with nextTick; observe them before receipt.
++        setImmediate(() => resolve(Object.freeze({ transportSettled: true, queriesSettled: true })))
++      }
++      if (stream.closed) return closed()
++      stream.once('close', closed)
++      try {
++        stream.destroy()
++      } catch (error) {
++        stream.removeListener('close', closed)
++        reject(error)
++      }
++    })
++    return this._termination
++  }
++
+   end(cb) {
+     this._ending = true
+ 
