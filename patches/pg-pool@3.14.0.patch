@@ -1,0 +1,369 @@
+diff --git a/index.js b/index.js
+index ab514fa88f0e2f37eaf19c25c54d527a28675a12..734c274dcc59803fca5c433a373aa17fa594685e 100644
+--- a/index.js	
++++ b/index.js	
+@@ -91,7 +91,15 @@ class Pool extends EventEmitter {
+     this.options.maxUses = this.options.maxUses || Infinity
+     this.options.allowExitOnIdle = this.options.allowExitOnIdle || false
+     this.options.maxLifetimeSeconds = this.options.maxLifetimeSeconds || 0
+-    this.log = this.options.log || function () {}
++    // Diagnostic sinks cannot interrupt mandatory ownership transitions.
++    this.log = (...args) => {
++      try {
++        const result = this.options.log && this.options.log(...args)
++        if (result && typeof result.then === 'function') this.Promise.resolve(result).catch(error => this._diagnose(this._diagnostics, 'log', error))
++      } catch (error) {
++        this._diagnose(this._diagnostics, 'log', error)
++      }
++    }
+     this.Client = this.options.Client || Client || require('pg').Client
+     this.Promise = this.options.Promise || global.Promise
+ 
+@@ -103,6 +111,10 @@ class Pool extends EventEmitter {
+     this._idle = []
+     this._expired = new WeakSet()
+     this._pendingQueue = []
++    this._closing = new Map()
++    this._removed = new WeakMap()
++    this._diagnostics = []
++    this._connectingOwners = new Map()
+     this._endCallback = undefined
+     this.ending = false
+     this.ended = false
+@@ -117,7 +129,33 @@ class Pool extends EventEmitter {
+   }
+ 
+   _isFull() {
+-    return this._clients.length >= this.options.max
++    const owned = new Set([...this._clients, ...this._closing.keys(), ...this._connectingOwners.keys()])
++    return owned.size >= this.options.max
++  }
++
++  _diagnose(diagnostics, event, error) {
++    // Bounded raw in-memory evidence; never implicitly log client/SQL/errors.
++    if (diagnostics.length < 32) diagnostics.push(Object.freeze({ event, error }))
++  }
++
++  _notify(event, diagnostics, ...args) {
++    let fault
++    for (const listener of this.rawListeners(event)) {
++      try {
++        const result = listener.apply(this, args)
++        if (result && typeof result.then === 'function') {
++          // Async lifecycle observers cannot hold or mutate driver transitions.
++          const error = new Error('Async pool lifecycle observer is unsupported')
++          this._diagnose(diagnostics, event, error)
++          fault = fault || error
++          this.Promise.resolve(result).catch(error => this._diagnose(diagnostics, event, error))
++        }
++      } catch (error) {
++        this._diagnose(diagnostics, event, error)
++        fault = fault || (error instanceof Error ? error : new Error('Pool lifecycle observer threw', { cause: error }))
++      }
++    }
++    return fault
+   }
+ 
+   _isAboveMin() {
+@@ -132,12 +170,18 @@ class Pool extends EventEmitter {
+     }
+     if (this.ending) {
+       this.log('pulse queue on ending')
++      for (const pending of this._pendingQueue.splice(0)) {
++        pending.timedOut = true
++        try { pending.callback(new Error('Pool ended before checkout')) } catch (error) {
++          this._diagnose(this._diagnostics, 'waiter', error)
++        }
++      }
+       if (this._idle.length) {
+         this._idle.slice().map((item) => {
+           this._remove(item.client)
+         })
+       }
+-      if (!this._clients.length) {
++      if (!this._clients.length && !this._closing.size && !this._connectingOwners.size) {
+         this.ended = true
+         this._endCallback()
+       }
+@@ -169,7 +213,15 @@ class Pool extends EventEmitter {
+     throw new Error('unexpected condition')
+   }
+ 
+-  _remove(client, callback) {
++  _remove(client, callback, diagnostics = [], force = false) {
++    const previous = this._removed.get(client)
++    if (previous) return previous.promise
++    let resolve
++    const promise = new this.Promise(done => { resolve = done })
++    const record = { promise, diagnostics }
++    // Register BEFORE any synchronous, reentrant or late end callback.
++    this._removed.set(client, record)
++    this._closing.set(client, record)
+     const removed = removeWhere(this._idle, (item) => item.client === client)
+ 
+     if (removed !== undefined) {
+@@ -177,14 +229,41 @@ class Pool extends EventEmitter {
+     }
+ 
+     this._clients = this._clients.filter((c) => c !== client)
+-    const context = this
+-    client.end(() => {
+-      context.emit('remove', client)
+-
+-      if (typeof callback === 'function') {
+-        callback()
++    let settled = false
++    let timer
++    const finish = () => {
++      if (settled) return
++      settled = true
++      clearTimeout(timer)
++      this._notify('remove', diagnostics, client)
++      this._closing.delete(client)
++      const receipt = Object.freeze({ removed: true, transportSettled: true,
++        get diagnostics() { return Object.freeze(diagnostics.slice()) } })
++      resolve(receipt)
++      try { if (callback) callback() } finally { this._pulseQueue() }
++    }
++    const terminate = () => {
++      if (settled) return
++      if (typeof client.terminate !== 'function') {
++        this._diagnose(diagnostics, 'termination', new Error('No supported terminal transport contract'))
++        return // Explicit owned closing capacity, never false clean completion.
+       }
+-    })
++      try {
++        this.Promise.resolve(client.terminate()).then(receipt => {
++          if (receipt && receipt.transportSettled === true && receipt.queriesSettled === true) finish()
++          else this._diagnose(diagnostics, 'termination', new Error('Invalid termination receipt'))
++        }, error => this._diagnose(diagnostics, 'termination', error))
++      } catch (error) { this._diagnose(diagnostics, 'termination', error) }
++    }
++    timer = setTimeout(terminate, 1000)
++    if (force) terminate()
++    else {
++      try { client.end(finish) } catch (error) {
++        this._diagnose(diagnostics, 'end', error)
++        terminate()
++      }
++    }
++    return promise
+   }
+ 
+   connect(cb) {
+@@ -240,6 +319,7 @@ class Pool extends EventEmitter {
+   newClient(pendingItem) {
+     const client = new this.Client(this.options)
+     this._clients.push(client)
++    this._connectingOwners.set(client, pendingItem)
+     const idleListener = makeIdleListener(this, client)
+ 
+     this.log('checking client timeout')
+@@ -268,10 +348,12 @@ class Pool extends EventEmitter {
+         clearTimeout(tid)
+       }
+       client.on('error', idleListener)
++      if (timeoutHit && !err) err = new Error('Late connection after connection timeout')
+       if (err) {
++        this._connectingOwners.delete(client)
+         this.log('client failed to connect', err)
+         // remove the dead client from our list of clients
+-        this._clients = this._clients.filter((c) => c !== client)
++        this._remove(client, undefined, [], true)
+         if (timeoutHit) {
+           err = new Error('Connection terminated due to connection timeout', { cause: err })
+         }
+@@ -284,6 +366,13 @@ class Pool extends EventEmitter {
+         }
+       } else {
+         this.log('new client connected')
++        if (this.ending || pendingItem.timedOut) {
++          this._connectingOwners.delete(client)
++          this._remove(client, undefined, [], true)
++          this._pulseQueue()
++          if (!pendingItem.timedOut) pendingItem.callback(new Error('Pool ended before checkout'), undefined, NOOP)
++          return
++        }
+ 
+         if (this.options.onConnect) {
+           this._promiseTry(() => this.options.onConnect(client)).then(
+@@ -291,13 +380,10 @@ class Pool extends EventEmitter {
+               this._afterConnect(client, pendingItem, idleListener)
+             },
+             (hookErr) => {
+-              this._clients = this._clients.filter((c) => c !== client)
+-              client.end(() => {
+-                this._pulseQueue()
+-                if (!pendingItem.timedOut) {
+-                  pendingItem.callback(hookErr, undefined, NOOP)
+-                }
+-              })
++              this._connectingOwners.delete(client)
++              this._remove(client, undefined, [], true)
++              this._pulseQueue()
++              if (!pendingItem.timedOut) pendingItem.callback(hookErr, undefined, NOOP)
+             }
+           )
+           return
+@@ -309,6 +395,13 @@ class Pool extends EventEmitter {
+   }
+ 
+   _afterConnect(client, pendingItem, idleListener) {
++    if (this.ending || pendingItem.timedOut || this._removed.has(client)) {
++      this._connectingOwners.delete(client)
++      this._remove(client, undefined, [], true)
++      this._pulseQueue()
++      if (!pendingItem.timedOut) pendingItem.callback(new Error('Pool ended before checkout'), undefined, NOOP)
++      return
++    }
+     if (this.options.maxLifetimeSeconds !== 0) {
+       const maxLifetimeTimeout = setTimeout(() => {
+         this.log('ending client due to expired lifetime')
+@@ -333,14 +426,17 @@ class Pool extends EventEmitter {
+ 
+   // acquire a client for a pending work item
+   _acquireClient(client, pendingItem, idleListener, isNew) {
+-    if (isNew) {
+-      this.emit('connect', client)
++    this._connectingOwners.delete(client)
++    const diagnostics = []
++    client.release = this._releaseOnce(client, idleListener, diagnostics)
++    const fault = (isNew && this._notify('connect', diagnostics, client)) ||
++      this._notify('acquire', diagnostics, client)
++    if (fault || this.ending || pendingItem.timedOut) {
++      client.dispose()
++      if (!pendingItem.timedOut) pendingItem.callback(fault || new Error('Pool ended before checkout'), undefined, NOOP)
++      return
+     }
+ 
+-    this.emit('acquire', client)
+-
+-    client.release = this._releaseOnce(client, idleListener)
+-
+     client.removeListener('error', idleListener)
+ 
+     if (!pendingItem.timedOut) {
+@@ -366,8 +462,18 @@ class Pool extends EventEmitter {
+   }
+ 
+   // returns a function that wraps _release and throws if called more than once
+-  _releaseOnce(client, idleListener) {
++  _releaseOnce(client, idleListener, diagnostics = []) {
+     let released = false
++    let returned = false
++    let disposal
++
++    client.dispose = () => {
++      if (disposal) return disposal
++      if (returned) return this.Promise.reject(new Error('Checkout already returned; disposal ownership ended'))
++      released = true
++      disposal = this._remove(client, undefined, diagnostics, true)
++      return disposal
++    }
+ 
+     return (err) => {
+       if (released) {
+@@ -375,18 +481,30 @@ class Pool extends EventEmitter {
+       }
+ 
+       released = true
+-      this._release(client, idleListener, err)
++      try {
++        this._release(client, idleListener, err, diagnostics)
++      } finally {
++        const removal = this._removed.get(client)
++        if (removal) disposal = removal.promise
++        else returned = true
++      }
+     }
+   }
+ 
+   // release a client back to the poll, include an error
+   // to remove it from the pool
+-  _release(client, idleListener, err) {
++  _release(client, idleListener, err, diagnostics = []) {
+     client.on('error', idleListener)
+ 
+     client._poolUseCount = (client._poolUseCount || 0) + 1
+ 
+-    this.emit('release', err, client)
++    const notificationFault = this._notify('release', diagnostics, err, client)
++    if (notificationFault) {
++      this._remove(client, undefined, diagnostics, true)
++      throw notificationFault
++    }
++    // A lifecycle observer may synchronously call its checkout's public dispose.
++    if (this._removed.has(client)) return
+ 
+     // TODO(bmc): expose a proper, public interface _queryable and _ending
+     if (err || this.ending || !client._queryable || client._ending || client._poolUseCount >= this.options.maxUses) {
+@@ -457,7 +575,9 @@ class Pool extends EventEmitter {
+           return
+         }
+         clientReleased = true
+-        client.release(err)
++        try { client.release(err) } catch (cleanup) {
++          this._diagnose(this._diagnostics, 'query-release', cleanup)
++        }
+         cb(err)
+       }
+ 
+@@ -471,14 +591,21 @@ class Pool extends EventEmitter {
+             return
+           }
+           clientReleased = true
+-          client.release(err)
++          try { client.release(err) } catch (cleanup) {
++            this._diagnose(this._diagnostics, 'query-release', cleanup)
++          }
+           if (err) {
+             return cb(err)
+           }
+           return cb(undefined, res)
+         })
+       } catch (err) {
+-        client.release(err)
++        if (!clientReleased) {
++          clientReleased = true
++          try { client.release(err) } catch (cleanup) {
++            this._diagnose(this._diagnostics, 'query-release', cleanup)
++          }
++        }
+         return cb(err)
+       }
+     })
+@@ -494,6 +621,15 @@ class Pool extends EventEmitter {
+     this.ending = true
+     const promised = promisify(this.Promise, cb)
+     this._endCallback = promised.callback
++    for (const [client, pending] of this._connectingOwners) {
++      if (!pending.timedOut) {
++        pending.timedOut = true
++        try { pending.callback(new Error('Pool ended during connection setup'), undefined, NOOP) } catch (error) {
++          this._diagnose(this._diagnostics, 'waiter', error)
++        }
++      }
++      this._remove(client, undefined, [], true)
++    }
+     this._pulseQueue()
+     return promised.result
+   }
+@@ -502,6 +638,18 @@ class Pool extends EventEmitter {
+     return this._pendingQueue.length
+   }
+ 
++  get closingCount() {
++    return this._closing.size
++  }
++
++  get connectingCount() {
++    return this._connectingOwners.size
++  }
++
++  get diagnostics() {
++    return Object.freeze(this._diagnostics.slice())
++  }
++
+   get idleCount() {
+     return this._idle.length
+   }

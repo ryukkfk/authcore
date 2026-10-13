@@ -162,6 +162,13 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  pg-pool: 3.14.0
+
+patchedDependencies:
+  pg-pool@3.14.0: 1d7975ca58804e74ddabf2d7d78dfcc4bae6a7f82d5fa431080e823b511798d2
+  pg@8.23.1: bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b
+
 importers:
 
   .:
@@ -263,10 +270,10 @@ importers:
         version: link:../config
       drizzle-orm:
         specifier: ^0.45.3
-        version: 0.45.3(@types/pg@8.23.1)(pg@8.23.1)
+        version: 0.45.3(@types/pg@8.23.1)(pg@8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b))
       pg:
-        specifier: ^8.23.1
-        version: 8.23.1
+        specifier: 8.23.1
+        version: 8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b)
     devDependencies:
       '@types/pg':
         specifier: ^8.23.1
@@ -2966,10 +2973,10 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.23.15
 
-  drizzle-orm@0.45.3(@types/pg@8.23.1)(pg@8.23.1):
+  drizzle-orm@0.45.3(@types/pg@8.23.1)(pg@8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b)):
     optionalDependencies:
       '@types/pg': 8.23.1
-      pg: 8.23.1
+      pg: 8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b)
 
   dunder-proto@1.0.1:
     dependencies:
@@ -3483,9 +3490,9 @@ snapshots:
 
   pg-int8@1.0.1: {}
 
-  pg-pool@3.14.0(pg@8.23.1):
+  pg-pool@3.14.0(patch_hash=1d7975ca58804e74ddabf2d7d78dfcc4bae6a7f82d5fa431080e823b511798d2)(pg@8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b)):
     dependencies:
-      pg: 8.23.1
+      pg: 8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b)
 
   pg-protocol@1.16.1: {}
 
@@ -3497,10 +3504,10 @@ snapshots:
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
 
-  pg@8.23.1:
+  pg@8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b):
     dependencies:
       pg-connection-string: 2.14.1
-      pg-pool: 3.14.0(pg@8.23.1)
+      pg-pool: 3.14.0(patch_hash=1d7975ca58804e74ddabf2d7d78dfcc4bae6a7f82d5fa431080e823b511798d2)(pg@8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b))
       pg-protocol: 1.16.1
       pg-types: 2.2.0
       pgpass: 1.0.5

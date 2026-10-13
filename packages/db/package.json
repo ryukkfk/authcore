@@ -19,7 +19,7 @@
   "dependencies": {
     "@authcore/config": "workspace:*",
     "drizzle-orm": "^0.45.3",
-    "pg": "^8.23.1"
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

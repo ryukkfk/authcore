@@ -1,0 +1,24 @@
+{
+  "pg": {
+    "version": "8.23.1",
+    "upstreamGitHead": "0980cefebe0ae461da8883703be049fe13ca96cf",
+    "officialTarball": "https://registry.npmjs.org/pg/-/pg-8.23.1.tgz",
+    "patch": "patches/pg@8.23.1.patch",
+    "patchSha256": "bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b",
+    "source": "lib/client.js",
+    "installedSha256": "fae1466be6be7f4d205236a4a6622b6afb30b4d9dd7dc3f8067997f788e0df92",
+    "license": "MIT",
+    "licenseSha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+  },
+  "pg-pool": {
+    "version": "3.14.0",
+    "upstreamGitHead": "544b1ce8152bc280e398dc1e8a66920abe6a640e",
+    "officialTarball": "https://registry.npmjs.org/pg-pool/-/pg-pool-3.14.0.tgz",
+    "patch": "patches/pg-pool@3.14.0.patch",
+    "patchSha256": "1d7975ca58804e74ddabf2d7d78dfcc4bae6a7f82d5fa431080e823b511798d2",
+    "source": "index.js",
+    "installedSha256": "3fce9f04c23f5f24387dd2ab957143e33f3e4ca0d6d2c245da93d6ff1f3c98b3",
+    "license": "MIT",
+    "licenseSha256": "4f15ee7fc2a72082859d7e0d12dfa4bcdd70b1c744ad3850d07780730ac08557"
+  }
+}
