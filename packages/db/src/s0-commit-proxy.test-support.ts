@@ -79,7 +79,11 @@ export function approvedTestUrl(value: string | undefined, applicationValue?: st
 }
 
 /** Only exact simple-query COMMIT is supported. No TLS, SQL rewriting, or runtime use. */
-export async function commitAckProxy(target: URL, log = trace()) {
+export async function commitAckProxy(
+  target: URL,
+  log = trace(),
+  mode: 'close' | 'stall' = 'close',
+) {
   const sockets = new Map<Socket, Promise<void>>();
   const observed = deferred<void>();
   let armed = false;
@@ -146,9 +150,15 @@ export async function commitAckProxy(target: URL, log = trace()) {
             // Complete server CommandComplete was received; zero bytes of it go downstream.
             log.add('server_CommandComplete_received', 'COMMIT');
             dropped = true;
-            log.add('COMMIT_ACK_withheld_transport_destroyed');
-            upstream.destroy();
-            downstream.destroy();
+            log.add(
+              mode === 'close'
+                ? 'COMMIT_ACK_withheld_transport_destroyed'
+                : 'COMMIT_ACK_withheld_transport_open',
+            );
+            if (mode === 'close') {
+              upstream.destroy();
+              downstream.destroy();
+            }
             observed.resolve();
             break; // Also withhold any ReadyForQuery coalesced in the same TCP chunk.
           }

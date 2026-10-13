@@ -15,14 +15,31 @@ import {
 function setup() {
   const connections: ReturnType<typeof connection>[] = [];
   function connection() {
-    return Object.assign(new EventEmitter(), {
+    const client = Object.assign(new EventEmitter(), {
       connection: { stream: new PassThrough() },
       query: vi.fn(async (command: string) => {
         if (command === 'ROLLBACK') throw new Error('rollback failed');
-        return { rows: [] };
+        return { command: command.split(' ')[0]!, rows: [] };
       }),
       end: vi.fn(() => new Promise<void>(() => {})),
       release: vi.fn(),
+    });
+    return Object.assign(client, {
+      dispose: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            const stream = client.connection.stream;
+            const close = () => stream.destroy();
+            const timer = setTimeout(close, 1000);
+            stream.once('close', () => {
+              clearTimeout(timer);
+              client.removeListener('end', close);
+              resolve({ removed: true, transportSettled: true, diagnostics: [] });
+            });
+            client.once('end', close);
+            void client.end().catch(close);
+          }),
+      ),
     });
   }
   const database = {
@@ -73,7 +90,7 @@ describe('signup admission through transaction teardown', () => {
     resume();
     expect(await pending).toBe(fatal);
     expect(evalCommand).toHaveBeenCalledTimes(3);
-    expect(connections[0]!.release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(connections[0]!.dispose).toHaveBeenCalledExactlyOnceWith();
   });
 
   it.each(['delayed end', 'forced socket close'])(
@@ -115,8 +132,7 @@ describe('signup admission through transaction teardown', () => {
       }
       expect(await Promise.all(pending)).toEqual([primary, primary, primary, primary]);
       expect(evalCommand).toHaveBeenCalledTimes(8);
-      for (const client of connections)
-        expect(client.release).toHaveBeenCalledExactlyOnceWith(true);
+      for (const client of connections) expect(client.dispose).toHaveBeenCalledExactlyOnceWith();
       await expect(
         admission.run(() => runSignupTransaction(database, async () => 42)),
       ).resolves.toBe(42);

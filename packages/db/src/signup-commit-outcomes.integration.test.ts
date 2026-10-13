@@ -10,7 +10,8 @@ import {
   SignupIdempotencyResultRepository as Results,
   type SignupClaimBinding,
 } from './repositories/signup-idempotency.repository.js';
-import { runSignupTransaction } from './signup-transaction.js';
+import { runSignupTransaction, runOwnedSignupTransaction } from './signup-transaction.js';
+import { signupOwnerInventory } from './signup-owner-state.js';
 import { approvedTestUrl, bounded, commitAckProxy, trace } from './s0-commit-proxy.test-support.js';
 
 // Two explicit inputs. Merely running baseline CI must not authorize a new resource harness.
@@ -58,8 +59,8 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     await client.connect();
     return client;
   }
-  function pool(url = target) {
-    const value = new Pool({ ...config(url), max: 2, idleTimeoutMillis: 0 });
+  function pool(url = target, max = 2) {
+    const value = new Pool({ ...config(url), max, idleTimeoutMillis: 0 });
     pools.add(value);
     return value;
   }
@@ -199,6 +200,82 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     }
   }, 20_000);
 
+  it('S1 stalls a real committed ACK until the recovery owner deadline without inferring rollback', async () => {
+    const log = trace();
+    const proxy = await commitAckProxy(target, log, 'stall');
+    proxies.add(proxy);
+    const ownerPool = pool(proxy.url);
+    const database = { pool: ownerPool } as DatabaseClient;
+    const marker = randomUUID();
+    proxy.arm();
+    const started = performance.now();
+    const pending = runOwnedSignupTransaction(
+      database,
+      async (tx) => {
+        await tx.execute(`INSERT INTO public.s0_markers VALUES ('${marker}')`);
+        return marker;
+      },
+      { profile: 'recovery' },
+    );
+    await proxy.waitForDrop();
+    const witness = await session();
+    await assertMarker(witness, marker, true, log);
+    const result = await bounded(pending, 'S1 real stalled ACK', 6000);
+    expect(result.outcome).toBe('COMMIT_UNKNOWN');
+    expect(result.value).toBeUndefined();
+    expect(result.primary?.error).toMatchObject({ code: 'TRANSACTION_DEADLINE' });
+    await bounded(result.settlement, 'S1 stalled ACK ownership settlement');
+    expect(signupOwnerInventory(database)).toEqual([]);
+    expect(ownerPool.totalCount).toBe(0);
+    log.add('owner_deadline_elapsed_ms', String(performance.now() - started));
+    log.add('outcome', result.outcome);
+    log.add('cleanup', result.cleanup);
+    evidence('S1_STALLED_ACK', log);
+  }, 10000);
+
+  it('S1 cancelled real pool waiter retains late disposal ownership without BEGIN or work', async () => {
+    const ownerPool = pool(target, 1);
+    const held = await ownerPool.connect();
+    const database = { pool: ownerPool } as DatabaseClient;
+    const controller = new AbortController();
+    let calls = 0;
+    try {
+      const pending = runOwnedSignupTransaction(
+        database,
+        async () => {
+          calls++;
+          return 42;
+        },
+        { signal: controller.signal },
+      );
+      await expect.poll(() => ownerPool.waitingCount).toBe(1);
+      controller.abort();
+      const result = await pending;
+      expect(result.outcome).toBe('NOT_SUBMITTED');
+      expect(result.cleanup).toBe('QUARANTINED_WITH_OWNER');
+      expect(signupOwnerInventory(database)).toHaveLength(1);
+      held.release();
+      await bounded(result.settlement, 'S1 late checkout disposal');
+      expect(calls).toBe(0);
+      expect(ownerPool.totalCount).toBe(0);
+      expect(signupOwnerInventory(database)).toEqual([]);
+      console.info(
+        JSON.stringify({
+          scenario: 'S1_REAL_CANCELLED_WAITER',
+          outcome: result.outcome,
+          cleanup: result.cleanup,
+          workCalls: calls,
+          retainedOwners: 0,
+          poolTotal: ownerPool.totalCount,
+        }),
+      );
+    } finally {
+      // This captured checkout is consumed either by release above or explicit disposal on failure.
+      if (ownerPool.totalCount && ownerPool.idleCount === 0)
+        await (held as typeof held & { dispose(): Promise<unknown> }).dispose();
+    }
+  });
+
   it('S0-01 committed marker survives a real selectively withheld COMMIT ACK', async () => {
     const log = trace();
     const proxy = await commitAckProxy(target, log);
@@ -289,49 +366,58 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
     expect(observed.ok).toBe(false);
   });
 
-  it('S0-04 S1 regression: release fault preserves acknowledged durable COMMIT', async () => {
-    const log = trace();
-    const ownerPool = pool();
-    const client = await ownerPool.connect();
-    const witness = await session();
-    const marker = randomUUID();
-    captureCommit(client, log);
-    const release = client.release.bind(client);
-    const failure = new Error('S0 injected release failure');
-    client.release = () => {
-      log.add('injected_release_failure');
-      throw failure;
-    };
-    try {
-      const observed = await runSignupTransaction(
-        { pool: { connect: async () => client } } as unknown as DatabaseClient,
-        async () => {
-          await client.query('INSERT INTO public.s0_markers VALUES ($1)', [marker]);
-          return 'accepted';
-        },
-      ).then(
-        (value) => ({ ok: true, value }),
-        (error) => ({ ok: false, error }),
-      );
-      log.add(
-        'owner_completion',
-        observed.ok ? 'preserved_acknowledged_commit' : 'rejected_cleanup_error',
-      );
-      expect(
-        log.events.find((event) => event.event === 'owner_COMMIT_query_resolved')?.detail,
-      ).toBe('COMMIT');
-      await assertMarker(witness, marker, true, log);
-      expect(ownerPool.idleCount).toBe(0);
-      // Throw-before-release leaves pool checkout owned; test must dispose it explicitly.
-      log.add('pool_checkout_count_after_release_throw', String(ownerPool.totalCount));
-      evidence('S0-04', log);
-      expect(observed).toMatchObject({ ok: true, value: 'accepted' });
-      expect(ownerPool.totalCount).toBe(0);
-    } finally {
-      client.release = release;
-      release(true);
-    }
-  });
+  it.each(['before-release', 'release-event', 'after-removal'] as const)(
+    'S0-04 S1 regression: %s fault preserves acknowledged durable COMMIT',
+    async (mode) => {
+      const log = trace();
+      const ownerPool = pool();
+      const client = await ownerPool.connect();
+      const witness = await session();
+      const marker = randomUUID();
+      captureCommit(client, log);
+      const release = client.release.bind(client);
+      const failure = new Error('S0 injected release failure');
+      if (mode === 'release-event')
+        ownerPool.once('release', () => {
+          throw failure;
+        });
+      else
+        client.release = () => {
+          log.add('injected_release_failure', mode);
+          if (mode === 'after-removal') release(true);
+          throw failure;
+        };
+      try {
+        const observed = await runSignupTransaction(
+          { pool: { connect: async () => client } } as unknown as DatabaseClient,
+          async () => {
+            await client.query('INSERT INTO public.s0_markers VALUES ($1)', [marker]);
+            return 'accepted';
+          },
+        ).then(
+          (value) => ({ ok: true, value }),
+          (error) => ({ ok: false, error }),
+        );
+        log.add(
+          'owner_completion',
+          observed.ok ? 'preserved_acknowledged_commit' : 'rejected_cleanup_error',
+        );
+        expect(
+          log.events.find((event) => event.event === 'owner_COMMIT_query_resolved')?.detail,
+        ).toBe('COMMIT');
+        await assertMarker(witness, marker, true, log);
+        expect(ownerPool.idleCount).toBe(0);
+        // Owner must dispose even when a wrapper throws before invoking release.
+        log.add('pool_checkout_count_after_release_throw', String(ownerPool.totalCount));
+        evidence('S0-04', log);
+        expect(observed).toMatchObject({ ok: true, value: 'accepted' });
+        expect(ownerPool.totalCount).toBe(0);
+      } finally {
+        client.release = release;
+        await (client as typeof client & { dispose(): Promise<unknown> }).dispose();
+      }
+    },
+  );
 
   it('S0-05 manual Phase A reservation survives real ACK loss independently of signup', async () => {
     const log = trace();

@@ -72,6 +72,10 @@ jobs:
       - name: A1 driver patch integrity
         run: node scripts/verify-driver-patches.mjs
 
+      - name: Production dependency advisory scan
+        timeout-minutes: 2
+        run: pnpm audit --prod --registry=https://registry.npmjs.org
+
       - name: Lint
         run: pnpm lint
 
@@ -103,7 +107,7 @@ jobs:
             console.log("A1_REAL_POSTGRES total=3 passed=3 skipped=0");
           '
 
-      - name: S1 pool ownership prerequisite characterization
+      - name: S1 public pool ownership regression
         env:
           S1_POSTGRES_APPROVED: 'true'
           SIGNUP_ENABLED: 'false'
@@ -121,7 +125,7 @@ jobs:
             assert.equal(result.success, true);
             assert.equal(tests.length, 1);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S1_POOL_PREREQUISITE_BLOCKER_REPRODUCED total=1 passed=1 skipped=0; S1 remains BLOCKED");
+            console.log("S1_POOL_OWNERSHIP total=1 passed=1 skipped=0");
           '
 
       - name: Test
@@ -130,7 +134,7 @@ jobs:
       - name: PostgreSQL integration tests
         run: pnpm --filter @authcore/db test:integration
 
-      - name: S0 real PostgreSQL outcome verification
+      - name: S1 real PostgreSQL outcome and inherited S0 verification
         env:
           S0_POSTGRES_APPROVED: 'true'
           SIGNUP_ENABLED: 'false'
@@ -146,9 +150,9 @@ jobs:
             const result = JSON.parse(readFileSync("packages/db/s0-results.json", "utf8"));
             const tests = result.testResults.flatMap(file => file.assertionResults);
             assert.equal(result.success, true);
-            assert.equal(tests.length, 9);
+            assert.equal(tests.length, 13);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S0_REAL_VERIFICATION total=9 passed=9 skipped=0");
+            console.log("S1_REAL_OUTCOMES total=13 passed=13 skipped=0");
           '
 
       - name: Redis integration tests

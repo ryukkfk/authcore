@@ -135,8 +135,10 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
           // pg emits an unsolicited error while application work is paused.
           await new Promise((resolve) => setTimeout(resolve, 3_500));
         } else {
-          // Every statement is below 5s and every idle gap below 3s. Only the
-          // aggregate transaction lifetime can terminate this sequence.
+          // Separate the server SQLSTATE test from the owner's 15s deadline race.
+          // Defaults were asserted above; shorten only this disposable session's
+          // lifetime so server 25P04 deterministically precedes owner cancellation.
+          await tx.execute("SET LOCAL transaction_timeout = '1s'");
           for (let n = 0; n < 100; n++) await tx.execute('SELECT pg_sleep(0.2)');
         }
       });
@@ -215,7 +217,11 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
       const query = vi.spyOn(pinned, 'query');
       // Fault injection at the transport boundary; all other SQL uses real pg.
       query.mockImplementation(((text: string, ...args: unknown[]) => {
-        if (text === command) return Promise.reject(failure);
+        if (
+          text === command ||
+          (command === 'BEGIN' && text === 'BEGIN ISOLATION LEVEL READ COMMITTED')
+        )
+          return Promise.reject(failure);
         return Reflect.apply(original, pinned, [text, ...args]);
       }) as typeof pinned.query);
       try {
