@@ -26,11 +26,22 @@ export {
 export {
   setSignupTransactionTimeouts,
   runSignupTransaction,
+  runOwnedSignupTransaction,
+  type SignupOwnerOptions,
+  type SignupTransactionEvidence,
   SIGNUP_LOCK_TIMEOUT_MS,
   SIGNUP_STATEMENT_TIMEOUT_MS,
   SIGNUP_TRANSACTION_TIMEOUT_MS,
   SIGNUP_IDLE_TRANSACTION_TIMEOUT_MS,
 } from './signup-transaction.js';
+export {
+  drainSignupTransactionOwners,
+  signupOwnerInventory,
+  SignupOwnerError,
+  AcceptedProofLatch,
+  type TransactionOutcome,
+  type CleanupHealth,
+} from './signup-owner-state.js';
 export {
   SignupIdempotencyClaimRepository,
   SignupIdempotencyResultRepository,

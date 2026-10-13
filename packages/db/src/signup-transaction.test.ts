@@ -1,3 +1,4 @@
+import { disposalMock } from './signup-disposal.test-support.js';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { Pool, type Client } from 'pg';
@@ -11,15 +12,19 @@ function setup() {
   const connection = Object.assign(new EventEmitter(), {
     connection: { stream: new PassThrough() },
     query: vi
-      .fn<(command: string) => Promise<{ rows: unknown[] }>>()
-      .mockResolvedValue({ rows: [] }),
+      .fn<(command: string) => Promise<{ command: string; rows: unknown[] }>>()
+      .mockImplementation(async (command) => ({
+        command: command.split(' ')[0]!,
+        rows: [{ prior: '0', timeout_ms: 0 }],
+      })),
     release: vi.fn(),
     end: vi.fn(async () => {
       connection.emit('end');
     }),
   });
+  const owned = Object.assign(connection, { dispose: disposalMock(connection) });
   const database = { pool: { connect: async () => connection } } as unknown as DatabaseClient;
-  return { connection, database };
+  return { connection: owned, database };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -44,14 +49,18 @@ describe('signup transaction error precedence and teardown', () => {
           throw new Error('lease assertion failed');
         }),
       ).rejects.toBe(fatal);
-      expect(connection.release).toHaveBeenCalledExactlyOnceWith(true);
+      expect(connection.dispose).toHaveBeenCalledExactlyOnceWith();
     },
   );
 
   it('reuses a successful connection without ending it', async () => {
     const { connection, database } = setup();
     await expect(runSignupTransaction(database, async () => 42)).resolves.toBe(42);
-    expect(connection.query.mock.calls.map(([command]) => command)).toEqual(['BEGIN', 'COMMIT']);
+    expect(
+      connection.query.mock.calls
+        .map(([command]) => command.split(' ')[0]!)
+        .filter((command) => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(command)),
+    ).toEqual(['BEGIN', 'COMMIT']);
     expect(connection.end).not.toHaveBeenCalled();
     expect(connection.release).toHaveBeenCalledExactlyOnceWith();
     expect(connection.listenerCount('error')).toBe(0);
@@ -65,8 +74,8 @@ describe('signup transaction error precedence and teardown', () => {
       const { connection, database } = setup();
       const primary = Object.assign(new Error('primary SQL failure'), { code: '57014' });
       connection.query.mockImplementation(async (command) => {
-        if (command === stage) throw primary;
-        return { rows: [] };
+        if (command.split(' ')[0] === stage) throw primary;
+        return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
       });
       await expect(
         runSignupTransaction(database, async () => {
@@ -74,7 +83,7 @@ describe('signup transaction error precedence and teardown', () => {
           return 42;
         }),
       ).rejects.toBe(primary);
-      expect(connection.release).toHaveBeenCalledExactlyOnceWith(true);
+      expect(connection.dispose).toHaveBeenCalledExactlyOnceWith();
       if (stage === 'BEGIN') expect(connection.query).not.toHaveBeenCalledWith('ROLLBACK');
     },
   );
@@ -90,7 +99,7 @@ describe('signup transaction error precedence and teardown', () => {
         );
         throw new Error('rollback failed');
       }
-      return { rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     await expect(
       runSignupTransaction(database, async () => {
@@ -113,7 +122,7 @@ describe('signup transaction error precedence and teardown', () => {
           throw primary;
         }),
       ).rejects.toBe(primary);
-      expect(connection.release).toHaveBeenCalledExactlyOnceWith(true);
+      expect(connection.dispose).toHaveBeenCalledExactlyOnceWith();
     },
   );
 
@@ -143,7 +152,7 @@ describe('signup transaction error precedence and teardown', () => {
     const primary = new Error('application failure');
     connection.query.mockImplementation(async (command) => {
       if (command === 'ROLLBACK') throw new Error('rollback failed');
-      return { rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     connection.end.mockImplementation(() => new Promise(() => {}));
     let settled = false;
@@ -158,7 +167,7 @@ describe('signup transaction error precedence and teardown', () => {
     expect(connection.release).not.toHaveBeenCalled();
     connection.emit('end');
     expect(await pending).toBe(primary);
-    expect(connection.release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(connection.dispose).toHaveBeenCalledExactlyOnceWith();
   });
 
   it.each(['synchronous', 'asynchronous'])(
@@ -168,7 +177,7 @@ describe('signup transaction error precedence and teardown', () => {
       const primary = new Error('application failure');
       connection.query.mockImplementation(async (command) => {
         if (command === 'ROLLBACK') throw new Error('rollback failed');
-        return { rows: [] };
+        return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
       });
       if (mode === 'synchronous')
         connection.end.mockImplementation(() => {
@@ -184,7 +193,8 @@ describe('signup transaction error precedence and teardown', () => {
         }),
       ).rejects.toBe(primary);
       expect(connection.connection.stream.destroyed).toBe(true);
-      expect(connection.release).toHaveBeenCalledOnce();
+      expect(connection.dispose).toHaveBeenCalledOnce();
+      expect(connection.release).not.toHaveBeenCalled();
     },
   );
 
@@ -208,7 +218,7 @@ describe('signup transaction error precedence and teardown', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(await pending).toBe(primary);
     expect(connection.connection.stream.destroyed).toBe(true);
-    expect(connection.release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(connection.dispose).toHaveBeenCalledExactlyOnceWith();
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -226,7 +236,7 @@ describe('signup transaction error precedence and teardown', () => {
           });
         });
       }
-      return { rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     const pending = runSignupTransaction(database, async () => {
       throw primary;
@@ -237,7 +247,7 @@ describe('signup transaction error precedence and teardown', () => {
     expect(await pending).toBe(primary);
     expect(rollbackSettled).toBe(true);
     expect(connection.connection.stream.destroyed).toBe(true);
-    expect(connection.release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(connection.dispose).toHaveBeenCalledExactlyOnceWith();
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -251,8 +261,8 @@ describe('signup transaction error precedence and teardown', () => {
         throw new Error('later lease failure');
       }),
     ).rejects.toBe(fatal);
-    expect(connection.end).not.toHaveBeenCalled();
-    expect(connection.release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(connection.connection.stream.closed).toBe(true);
+    expect(connection.dispose).toHaveBeenCalledExactlyOnceWith();
   });
 
   it('reuses healthy pg-pool clients, waits for eviction, and never reuses an ended client', async () => {
@@ -270,7 +280,12 @@ describe('signup transaction error precedence and teardown', () => {
       async query(command: string) {
         if (this.closed) throw new Error('Client was closed and is not queryable');
         if (command === 'ROLLBACK') throw new Error('rollback transport error');
-        return { rows: [] };
+        return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
+      }
+      terminate() {
+        return new Promise((resolve) => {
+          this.end(() => resolve({ transportSettled: true, queriesSettled: true }));
+        });
       }
       end(callback?: () => void): Promise<void> | void {
         if (this.closed) {
@@ -306,7 +321,8 @@ describe('signup transaction error precedence and teardown', () => {
       throw primary;
     }).catch((error: unknown) => error);
     await vi.waitFor(() => expect(close).toBeTypeOf('function'));
-    expect(pool.totalCount).toBe(1);
+    expect(pool.totalCount).toBe(0);
+    expect((pool as Pool & { closingCount: number }).closingCount).toBe(1);
     expect(pool.idleCount).toBe(0);
     expect(removed).not.toHaveBeenCalled();
     close();

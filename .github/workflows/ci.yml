@@ -5,10 +5,13 @@ on:
     branches:
       - main
       - fix/pg-pool-a1-owned-disposal
+      - feat/signup-s1-transaction-owner
+      - feat/signup-s1-outcome-owner
   pull_request:
     branches:
       - main
       - test/signup-s0-commit-outcomes
+      - fix/pg-pool-a1-owned-disposal
 
 permissions:
   contents: read
@@ -69,6 +72,10 @@ jobs:
       - name: A1 driver patch integrity
         run: node scripts/verify-driver-patches.mjs
 
+      - name: Production dependency advisory scan
+        timeout-minutes: 2
+        run: pnpm audit --prod --registry=https://registry.npmjs.org
+
       - name: Lint
         run: pnpm lint
 
@@ -100,13 +107,34 @@ jobs:
             console.log("A1_REAL_POSTGRES total=3 passed=3 skipped=0");
           '
 
+      - name: S1 public pool ownership regression
+        env:
+          S1_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -n "$TEST_DATABASE_URL"
+          test -z "${DATABASE_URL:-}"
+          pnpm --filter @authcore/db test:integration src/signup-pool-ownership.integration.test.ts --reporter=verbose --reporter=json --outputFile.json=s1-pool-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("packages/db/s1-pool-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 1);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("S1_POOL_OWNERSHIP total=1 passed=1 skipped=0");
+          '
+
       - name: Test
         run: pnpm test
 
       - name: PostgreSQL integration tests
         run: pnpm --filter @authcore/db test:integration
 
-      - name: S0 real PostgreSQL outcome verification
+      - name: S1 real PostgreSQL outcome and inherited S0 verification
         env:
           S0_POSTGRES_APPROVED: 'true'
           SIGNUP_ENABLED: 'false'
@@ -122,9 +150,9 @@ jobs:
             const result = JSON.parse(readFileSync("packages/db/s0-results.json", "utf8"));
             const tests = result.testResults.flatMap(file => file.assertionResults);
             assert.equal(result.success, true);
-            assert.equal(tests.length, 9);
+            assert.equal(tests.length, 14);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S0_REAL_VERIFICATION total=9 passed=9 skipped=0");
+            console.log("S1_REAL_OUTCOMES total=14 passed=14 skipped=0");
           '
 
       - name: Redis integration tests

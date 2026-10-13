@@ -1,3 +1,4 @@
+import { disposalMock } from './signup-disposal.test-support.js';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,59 +9,67 @@ import { approvedTestUrl, Frames } from './s0-commit-proxy.test-support.js';
 function fixture() {
   const client = Object.assign(new EventEmitter(), {
     connection: { stream: new PassThrough() },
-    query: vi.fn(async (command: string) => ({ command, rows: [] as unknown[] })),
+    query: vi.fn(async (command: string) => ({
+      command: command.split(' ')[0]!,
+      rows: [{ prior: '0', timeout_ms: 0 }] as unknown[],
+    })),
     release: vi.fn(),
     end: vi.fn(async () => {
       client.emit('end');
     }),
   });
+  const owned = Object.assign(client, { dispose: disposalMock(client) });
   return {
-    client,
+    client: owned,
     database: { pool: { connect: async () => client } } as unknown as DatabaseClient,
   };
 }
 afterEach(() => vi.useRealTimers());
 
-describe('S0 current owner characterization — simulated transport, no PostgreSQL oracle', () => {
-  it('S0-03 KNOWN GAP: resolves work even when COMMIT resolves with ROLLBACK tag', async () => {
+describe('S1 corrected inherited owner regressions', () => {
+  it('S1-01 rejects callback success when COMMIT resolves with ROLLBACK tag', async () => {
     const { client, database } = fixture();
     client.query.mockImplementation(async (command) => ({
-      command: command === 'COMMIT' ? 'ROLLBACK' : command,
-      rows: [],
+      command: command === 'COMMIT' ? 'ROLLBACK' : command.split(' ')[0]!,
+      rows: [{ prior: '0', timeout_ms: 0 }],
     }));
     await expect(
       runSignupTransaction(database, async () => 'unsafe-current-success'),
-    ).resolves.toBe('unsafe-current-success');
-    expect(client.release).toHaveBeenCalledExactlyOnceWith();
-    // Desired S1: classify definite abort, never accept this tag as success.
+    ).rejects.toBeInstanceOf(Error);
+    expect(client.dispose).toHaveBeenCalledExactlyOnceWith();
+    // COMMIT_ROLLBACK never exposes the callback value.
   });
-  it('S0-04 KNOWN GAP: acknowledged COMMIT followed by release throw rejects the caller', async () => {
+  it('S1-02 acknowledged COMMIT survives release failure', async () => {
     const { client, database } = fixture();
     const cleanup = new Error('synthetic post-ACK release failure');
     client.release.mockImplementation(() => {
       throw cleanup;
     });
-    await expect(runSignupTransaction(database, async () => 'accepted')).rejects.toBe(cleanup);
-    expect(client.query.mock.calls.map(([command]) => command)).toEqual(['BEGIN', 'COMMIT']);
+    await expect(runSignupTransaction(database, async () => 'accepted')).resolves.toBe('accepted');
+    expect(
+      client.query.mock.calls
+        .map(([command]) => command.split(' ')[0]!)
+        .filter((command) => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(command)),
+    ).toEqual(['BEGIN', 'COMMIT']);
     expect(client.end).toHaveBeenCalledOnce();
-    // Desired S1: proven-success latch survives cleanup, while transport is disposed.
+    // Acknowledged transaction success survives cleanup; this alone is not signup business proof.
   });
-  it('S0-01 simulated rejection preserves uncertainty even if later ROLLBACK resolves', async () => {
+  it('S1 simulated ACK loss preserves uncertainty without a misleading later ROLLBACK', async () => {
     const { client, database } = fixture();
     const unknown = new Error('synthetic lost acknowledgement — no DB outcome evidence');
     client.query.mockImplementation(async (command) => {
       if (command === 'COMMIT') throw unknown;
-      return { command, rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     await expect(runSignupTransaction(database, async () => 42)).rejects.toBe(unknown);
-    expect(client.query.mock.calls.map(([command]) => command)).toEqual([
-      'BEGIN',
-      'COMMIT',
-      'ROLLBACK',
-    ]);
-    expect(client.release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(
+      client.query.mock.calls
+        .map(([command]) => command.split(' ')[0]!)
+        .filter((command) => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(command)),
+    ).toEqual(['BEGIN', 'COMMIT']);
+    expect(client.dispose).toHaveBeenCalledExactlyOnceWith();
   });
-  it('S0-07 holds checkout until pending COMMIT settles; has no owner COMMIT deadline', async () => {
+  it('S1 bounds stalled COMMIT and retains its unsettled command ownership', async () => {
     vi.useFakeTimers();
     const { client, database } = fixture();
     let rejectCommit!: (error: Error) => void;
@@ -69,7 +78,7 @@ describe('S0 current owner characterization — simulated transport, no PostgreS
         await new Promise<never>((_resolve, reject) => {
           rejectCommit = reject;
         });
-      return { command, rows: [] };
+      return { command: command.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
     });
     let settled = false;
     const pending = runSignupTransaction(database, async () => 42).catch((error: unknown) => {
@@ -77,15 +86,15 @@ describe('S0 current owner characterization — simulated transport, no PostgreS
       return error;
     });
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(settled).toBe(false);
+    expect(settled).toBe(false); // Broken fixture query is still owned after local disposal.
     expect(client.release).not.toHaveBeenCalled();
-    expect(client.connection.stream.destroyed).toBe(false);
+    expect(client.connection.stream.destroyed).toBe(true);
     const late = new Error('late COMMIT transport rejection');
     rejectCommit(late);
-    expect(await pending).toBe(late);
-    expect(client.release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(await pending).toMatchObject({ code: 'TRANSACTION_DEADLINE' });
+    expect(client.dispose).toHaveBeenCalledExactlyOnceWith();
   });
-  it('S0-07 KNOWN GAP: pending acquisition has no deadline or late-client disposal', async () => {
+  it('S1 bounds pending acquisition and disposes late clients without invoking work', async () => {
     vi.useFakeTimers();
     const { client } = fixture();
     let deliver!: (value: typeof client) => void;
@@ -98,14 +107,17 @@ describe('S0 current owner characterization — simulated transport, no PostgreS
       },
     } as unknown as DatabaseClient;
     const work = vi.fn(async () => 42);
-    const pending = runSignupTransaction(database, work);
+    const pending = runSignupTransaction(database, work).catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(work).not.toHaveBeenCalled();
     expect(client.release).not.toHaveBeenCalled();
     deliver(client);
-    await expect(pending).resolves.toBe(42);
-    expect(work).toHaveBeenCalledOnce();
-    // No cancellation input exists: late acquisition starts work instead of disposal.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await pending).toMatchObject({ code: 'ACQUIRE_DEADLINE' });
+    expect(work).not.toHaveBeenCalled();
+    expect(client.dispose).toHaveBeenCalledOnce();
+    expect(client.query).not.toHaveBeenCalled();
+    // The retained acquisition owner completes cleanup without starting callback work.
   });
   it('S0-07 evicts after teardown deadline and preserves primary error through late end', async () => {
     vi.useFakeTimers();
@@ -126,10 +138,11 @@ describe('S0 current owner characterization — simulated transport, no PostgreS
     await vi.advanceTimersByTimeAsync(1);
     expect(await pending).toBe(primary);
     expect(client.connection.stream.destroyed).toBe(true);
-    expect(client.release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(client.dispose).toHaveBeenCalledExactlyOnceWith();
     finish();
     await vi.advanceTimersByTimeAsync(0);
-    expect(client.release).toHaveBeenCalledOnce();
+    expect(client.dispose).toHaveBeenCalledOnce();
+    expect(client.release).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 });

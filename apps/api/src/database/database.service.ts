@@ -1,7 +1,12 @@
 import { Injectable, type OnApplicationShutdown } from '@nestjs/common';
 
 import { parseEnvironment } from '@authcore/config';
-import { checkDatabaseConnection, createDatabaseClient, type DatabaseClient } from '@authcore/db';
+import {
+  checkDatabaseConnection,
+  createDatabaseClient,
+  drainSignupTransactionOwners,
+  type DatabaseClient,
+} from '@authcore/db';
 
 @Injectable()
 export class DatabaseService implements OnApplicationShutdown {
@@ -24,6 +29,7 @@ export class DatabaseService implements OnApplicationShutdown {
   }
 
   async onApplicationShutdown(): Promise<void> {
+    await drainSignupTransactionOwners(this.client);
     await this.client.pool.end();
   }
 }
