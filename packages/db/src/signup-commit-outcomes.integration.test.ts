@@ -276,12 +276,17 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
       log.add('swallowed_server_ErrorResponse', '22012');
       return 'current_false_success';
     });
-    await expect(pending).rejects.toBeInstanceOf(Error);
+    const observed = await pending.then(
+      (value) => ({ ok: true, value }),
+      (error) => ({ ok: false, error }),
+    );
     expect(log.events.find((event) => event.event === 'owner_COMMIT_query_resolved')?.detail).toBe(
       'ROLLBACK',
     );
     await assertMarker(witness, marker, false, log);
+    log.add('owner_completion', observed.ok ? 'resolved_callback_value' : 'rejected');
     evidence('S0-03', log);
+    expect(observed.ok).toBe(false);
   });
 
   it('S0-04 S1 regression: release fault preserves acknowledged durable COMMIT', async () => {
@@ -298,25 +303,30 @@ describe.skipIf(!approved)('S0 real PostgreSQL characterization (no Phase B orch
       throw failure;
     };
     try {
-      await expect(
-        runSignupTransaction(
-          { pool: { connect: async () => client } } as unknown as DatabaseClient,
-          async () => {
-            await client.query('INSERT INTO public.s0_markers VALUES ($1)', [marker]);
-            return 'accepted';
-          },
-        ),
-      ).resolves.toBe('accepted');
-      log.add('owner_preserved_acknowledged_commit');
+      const observed = await runSignupTransaction(
+        { pool: { connect: async () => client } } as unknown as DatabaseClient,
+        async () => {
+          await client.query('INSERT INTO public.s0_markers VALUES ($1)', [marker]);
+          return 'accepted';
+        },
+      ).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      );
+      log.add(
+        'owner_completion',
+        observed.ok ? 'preserved_acknowledged_commit' : 'rejected_cleanup_error',
+      );
       expect(
         log.events.find((event) => event.event === 'owner_COMMIT_query_resolved')?.detail,
       ).toBe('COMMIT');
       await assertMarker(witness, marker, true, log);
       expect(ownerPool.idleCount).toBe(0);
       // Throw-before-release leaves pool checkout owned; test must dispose it explicitly.
-      expect(ownerPool.totalCount).toBe(0);
-      log.add('pool_checkout_retained_after_release_throw');
+      log.add('pool_checkout_count_after_release_throw', String(ownerPool.totalCount));
       evidence('S0-04', log);
+      expect(observed).toMatchObject({ ok: true, value: 'accepted' });
+      expect(ownerPool.totalCount).toBe(0);
     } finally {
       client.release = release;
       release(true);

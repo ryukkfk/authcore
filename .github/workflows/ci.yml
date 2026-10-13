@@ -75,6 +75,27 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      - name: S1 pool ownership prerequisite characterization
+        env:
+          S1_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -n "$TEST_DATABASE_URL"
+          test -z "${DATABASE_URL:-}"
+          pnpm --filter @authcore/db test:integration src/signup-pool-ownership.integration.test.ts --reporter=verbose --reporter=json --outputFile.json=s1-pool-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("packages/db/s1-pool-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 1);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("S1_POOL_PREREQUISITE_BLOCKER_REPRODUCED total=1 passed=1 skipped=0; S1 remains BLOCKED");
+          '
+
       - name: S0 real PostgreSQL outcome verification
         env:
           S0_POSTGRES_APPROVED: 'true'
