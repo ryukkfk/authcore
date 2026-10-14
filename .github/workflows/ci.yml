@@ -8,12 +8,14 @@ on:
       - feat/signup-s1-transaction-owner
       - feat/signup-s1-outcome-owner
       - feat/signup-s2-secure-reservation
+      - feat/signup-s3-postgres-capacity
   pull_request:
     branches:
       - main
       - test/signup-s0-commit-outcomes
       - fix/pg-pool-a1-owned-disposal
       - feat/signup-s1-transaction-owner
+      - feat/signup-s2-secure-reservation
 
 permissions:
   contents: read
@@ -176,6 +178,28 @@ jobs:
             assert.equal(tests.length, 19);
             assert(tests.every(test => test.status === "passed"));
             console.log("S2_REAL_RESERVATION total=19 passed=19 skipped=0");
+          '
+
+      - name: S3 real PostgreSQL capacity and independent HTTP processes
+        env:
+          S3_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -n "$TEST_DATABASE_URL"
+          test -n "$TEST_REDIS_URL"
+          test -z "${DATABASE_URL:-}"
+          pnpm --filter @authcore/api test src/identity/signup-capacity.integration.test.ts --reporter=verbose --reporter=json --outputFile.json=s3-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("apps/api/s3-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 14);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("S3_REAL_CAPACITY total=14 passed=14 skipped=0");
           '
 
       - name: Redis integration tests

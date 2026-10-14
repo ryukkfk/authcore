@@ -7,6 +7,7 @@ import {
   type SignupHmacConfiguration,
 } from '@authcore/crypto';
 import {
+  acquireSignupCapacity,
   assertSignupDatabaseAuthority,
   readSignupDatabaseClock,
   readSignupNamespace,
@@ -116,6 +117,7 @@ export async function createSignupReservationBoundary(
           database,
           async (tx) => {
             await assertNamespace(tx, hasher);
+            await acquireSignupCapacity(tx);
             const now = await readSignupDatabaseClock(tx);
             const expiresAt = new Date(now.getTime() + executionWindowMs!);
             if (!Number.isFinite(expiresAt.getTime())) throw new SignupReservationUnavailable();
@@ -138,6 +140,7 @@ export async function createSignupReservationBoundary(
           database,
           async (tx) => {
             await assertNamespace(tx, hasher);
+            await acquireSignupCapacity(tx);
             const locked = await Claims.lockByKey(tx, binding);
             if (!locked) return undefined;
             const fresh = await new Claims(tx).findByKey(binding);

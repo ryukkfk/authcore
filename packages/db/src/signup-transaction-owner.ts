@@ -19,6 +19,11 @@ export const SIGNUP_TRANSACTION_TIMEOUT_MS = 15_000;
 export const SIGNUP_IDLE_TRANSACTION_TIMEOUT_MS = 3_000;
 export const SIGNUP_TEARDOWN_TIMEOUT_MS = 1_000;
 export type SignupTransaction = Pick<DatabaseClient['db'], 'execute' | 'insert' | 'select'>;
+const activeWork = new WeakSet<SignupTransaction>();
+/** Internal work capability: a pool/autocommit adapter is never a capacity owner. */
+export function assertSignupTransactionWork(tx: SignupTransaction): void {
+  if (!activeWork.has(tx)) throw new SignupOwnerError('WORK_OWNERSHIP_REQUIRED');
+}
 export interface SignupOwnerOptions {
   signal?: AbortSignal;
   profile?: 'normal' | 'recovery';
@@ -127,6 +132,7 @@ export async function runOwnedSignupTransaction<T>(
   let originalTransactionTimeout: string | undefined;
   let unregister = () => {};
   let workSettlement = Promise.resolve();
+  let workCapability: SignupTransaction | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const record: OwnershipRecord = {
     id: newTransactionId(),
@@ -304,6 +310,8 @@ export async function runOwnedSignupTransaction<T>(
       insert: db.insert.bind(db),
       select: db.select.bind(db),
     });
+    workCapability = tx;
+    activeWork.add(tx);
     const working = Promise.resolve().then(() => {
       if (stopped || fatal) throw new SignupOwnerError('WORK_OWNERSHIP_ENDED');
       return work(tx);
@@ -316,6 +324,7 @@ export async function runOwnedSignupTransaction<T>(
     await race(serial);
     if (failures.length) throw failures[0];
     if (stopped || fatal) throw postgresFatal ?? new SignupOwnerError('WORK_OWNERSHIP_ENDED');
+    activeWork.delete(tx);
     record.phase = 'COMMIT_DISPATCH';
     record.outcome = 'COMMIT_UNKNOWN';
     const committed = track(
@@ -335,6 +344,7 @@ export async function runOwnedSignupTransaction<T>(
   } catch (error) {
     primary = { error: postgresFatal ?? error };
   } finally {
+    if (workCapability) activeWork.delete(workCapability);
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', abort);
     const cleanup = async () => {

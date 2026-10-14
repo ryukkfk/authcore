@@ -72,3 +72,11 @@ export {
   SignupProtocolError,
   type SignupClaimDecision,
 } from './signup-claim-policy.js';
+
+export {
+  acquireSignupCapacity,
+  SignupCapacityUnavailable,
+  SignupCapacityProtocolError,
+  SIGNUP_CAPACITY_NAMESPACE,
+  SIGNUP_POSTGRES_SLOTS,
+} from './signup-capacity.js';

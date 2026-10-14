@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { acquireSignupCapacity, SignupCapacityUnavailable } from './signup-capacity.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseClient } from './client.js';
 import {
@@ -347,5 +348,68 @@ describe('S1 evidence and owned cancellation', () => {
       latch.accept({ claimId: 'other' });
     }
     expect(latch.proof).toBe(proof);
+  });
+});
+
+describe('S3 capacity under the actual owner work capability', () => {
+  function capacityFixture(schedule: unknown[]) {
+    const value = fixture();
+    let queries = 0;
+    value.client.query.mockImplementation(async (command) => {
+      const text = typeof command === 'string' ? command : command.text;
+      if (text.includes('pg_try_advisory_xact_lock'))
+        return { command: 'SELECT', rows: [{ acquired: schedule[queries++] }] } as never;
+      return { command: text.split(' ')[0]!, rows: [{ prior: '0', timeout_ms: 0 }] };
+    });
+    return { ...value, queries: () => queries };
+  }
+  it('rejects an autocommit adapter before SQL', async () => {
+    const tx = { execute: vi.fn() } as unknown as SignupTransaction;
+    await expect(acquireSignupCapacity(tx)).rejects.toMatchObject({
+      code: 'WORK_OWNERSHIP_REQUIRED',
+    });
+    expect(tx.execute).not.toHaveBeenCalled();
+  });
+  it('stops at one successful slot and rejects any second attempt', async () => {
+    const value = capacityFixture([false, true, true, true]);
+    const result = await runSignupTransaction(value.database, async (tx) => {
+      const slot = await acquireSignupCapacity(tx);
+      await expect(acquireSignupCapacity(tx)).rejects.toMatchObject({
+        code: 'SIGNUP_CAPACITY_ALREADY_ATTEMPTED',
+      });
+      await expect(acquireSignupCapacity({ ...tx })).rejects.toMatchObject({
+        code: 'WORK_OWNERSHIP_REQUIRED',
+      });
+      return slot;
+    });
+    expect(result).toBe(1);
+    expect(value.queries()).toBe(2);
+  });
+  it('exhausts exactly four nonblocking probes without hidden retries', async () => {
+    const value = capacityFixture([false, false, false, false]);
+    await expect(
+      runSignupTransaction(value.database, acquireSignupCapacity),
+    ).rejects.toBeInstanceOf(SignupCapacityUnavailable);
+    expect(value.queries()).toBe(4);
+    expect(value.client.dispose).toHaveBeenCalledOnce();
+  });
+  it.each([undefined, 'true', 1])('rejects malformed server boolean %s', async (reply) => {
+    const value = capacityFixture([reply]);
+    await expect(runSignupTransaction(value.database, acquireSignupCapacity)).rejects.toMatchObject(
+      { code: 'SIGNUP_CAPACITY_RESPONSE_INVALID' },
+    );
+    expect(value.queries()).toBe(1);
+  });
+  it('revokes the capability after transaction end without sending new SQL', async () => {
+    const value = capacityFixture([true]);
+    let captured!: SignupTransaction;
+    await runSignupTransaction(value.database, async (tx) => {
+      captured = tx;
+      return acquireSignupCapacity(tx);
+    });
+    await expect(acquireSignupCapacity(captured)).rejects.toMatchObject({
+      code: 'WORK_OWNERSHIP_REQUIRED',
+    });
+    expect(value.queries()).toBe(1);
   });
 });
