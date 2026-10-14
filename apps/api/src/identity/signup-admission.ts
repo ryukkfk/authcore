@@ -29,11 +29,35 @@ redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1`;
 const RELEASE = `return redis.call('ZREM', KEYS[1], ARGV[1])`;
 
-const leaseContext = new AsyncLocalStorage<() => void>();
+interface LeaseContext {
+  assertActive(): void;
+  signal: AbortSignal;
+  retained: Set<Promise<void>>;
+  retentionFaults: number;
+  open: boolean;
+}
+const leaseContext = new AsyncLocalStorage<LeaseContext>();
+export function requireSignupAdmission(): Readonly<{ signal: AbortSignal; assertActive(): void }> {
+  const context = leaseContext.getStore();
+  if (!context?.open) throw new SignupAdmissionUnavailable();
+  context.assertActive();
+  return Object.freeze({ signal: context.signal, assertActive: context.assertActive });
+}
+export function retainSignupWorkSettlement(pending: Promise<unknown>): void {
+  const context = leaseContext.getStore();
+  if (!context?.open) throw new SignupAdmissionUnavailable();
+  const observed = Promise.resolve(pending).then(
+    () => {},
+    () => {
+      context.retentionFaults++;
+    },
+  );
+  context.retained.add(observed);
+}
 
 export function assertSignupLease(): void {
   // Internal service callers remain supported; HTTP signup always supplies a lease.
-  leaseContext.getStore()?.();
+  leaseContext.getStore()?.assertActive();
 }
 
 export class SignupAdmissionUnavailable extends ServiceUnavailableException {
@@ -46,6 +70,24 @@ export class SignupAdmissionUnavailable extends ServiceUnavailableException {
 export class SignupAdmission {
   // Keep local capacity occupied until actual work settles, even after lease loss.
   private active = 0;
+  private closing = false;
+  private cleanupFaults = 0;
+  private readonly owners = new Set<{ signal: AbortController; settlement: Promise<void> }>();
+
+  inventory() {
+    return Object.freeze({
+      active: this.active,
+      owners: this.owners.size,
+      cleanupFaults: this.cleanupFaults,
+      closing: this.closing,
+    });
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    this.closing = true;
+    for (const owner of this.owners) owner.signal.abort();
+    await Promise.all([...this.owners].map((owner) => owner.settlement));
+  }
 
   constructor(@Inject(RedisService) private readonly redis: RedisService) {}
 
@@ -60,7 +102,33 @@ export class SignupAdmission {
   }
 
   async run<T>(work: () => Promise<T>): Promise<T> {
-    if (this.active >= SIGNUP_CONCURRENCY) throw new SignupAdmissionUnavailable();
+    const operation = this.start(work);
+    try {
+      return await operation.response;
+    } finally {
+      await operation.settlement;
+    }
+  }
+
+  /** An early proven response never releases admission before retained work settles. */
+  start<T>(work: () => Promise<T>): { response: Promise<T>; settlement: Promise<void> } {
+    if (this.closing || this.active >= SIGNUP_CONCURRENCY) throw new SignupAdmissionUnavailable();
+    let resolveResponse!: (value: T) => void;
+    let rejectResponse!: (error: unknown) => void;
+    const response = new Promise<T>((resolve, reject) => {
+      resolveResponse = resolve;
+      rejectResponse = reject;
+    });
+    void response.catch(() => {});
+    const cancellation = new AbortController();
+    const context: LeaseContext = {
+      assertActive: () => {},
+      signal: cancellation.signal,
+      retained: new Set(),
+      retentionFaults: 0,
+      open: true,
+    };
+
     this.active++;
     const token = randomUUID();
     let acquired: boolean;
@@ -70,7 +138,10 @@ export class SignupAdmission {
     let renewal: Promise<void> | undefined;
     let stopped = false;
     const assertActive = () => {
-      if (lost || performance.now() >= deadline) throw new SignupAdmissionUnavailable();
+      if (this.closing || cancellation.signal.aborted || lost || performance.now() >= deadline) {
+        cancellation.abort();
+        throw new SignupAdmissionUnavailable();
+      }
     };
     const schedule = () => {
       timer = setTimeout(() => {
@@ -84,34 +155,58 @@ export class SignupAdmission {
             deadline = started + SIGNUP_LEASE_MS;
           } catch {
             lost = true;
+            cancellation.abort();
           }
           if (!stopped && !lost) schedule();
         })();
       }, SIGNUP_RENEW_MS);
       timer.unref();
     };
-    try {
+    context.assertActive = assertActive;
+    const execute = async () => {
       try {
-        acquired = (await this.command(ACQUIRE, token)) === 1;
-      } catch {
-        throw new SignupAdmissionUnavailable();
+        try {
+          acquired = (await this.command(ACQUIRE, token)) === 1;
+        } catch {
+          throw new SignupAdmissionUnavailable();
+        }
+        if (!acquired) throw new SignupAdmissionUnavailable();
+        assertActive();
+        schedule();
+        const value = await leaseContext.run(context, work);
+        resolveResponse(value);
+      } catch (error) {
+        rejectResponse(error);
+      } finally {
+        context.open = false;
+        // Renewal and local capacity remain owned through native work and quarantined cleanup.
+        await Promise.all([...context.retained]);
+        this.cleanupFaults += context.retentionFaults;
+        stopped = true;
+        clearTimeout(timer);
+        await renewal;
+        // An acquire timeout has an unknown outcome. Releasing this unique token is
+        // harmless; TTL is the final fallback if Redis is still unavailable.
+        try {
+          await this.command(RELEASE, token);
+        } catch {
+          this.cleanupFaults++;
+          // Never mask a committed success or the original operation failure.
+        }
+        this.active--;
       }
-      if (!acquired) throw new SignupAdmissionUnavailable();
-      assertActive();
-      schedule();
-      return await leaseContext.run(assertActive, work);
-    } finally {
-      stopped = true;
-      clearTimeout(timer);
-      await renewal;
-      // An acquire timeout has an unknown outcome. Releasing this unique token is
-      // harmless; TTL is the final fallback if Redis is still unavailable.
-      try {
-        await this.command(RELEASE, token);
-      } catch {
-        // Never mask a committed success or the original operation failure.
-      }
-      this.active--;
-    }
+    };
+    const owner = { signal: cancellation, settlement: Promise.resolve() };
+    const settlement = execute();
+    owner.settlement = settlement;
+    this.owners.add(owner);
+    void settlement.then(
+      () => this.owners.delete(owner),
+      () => {
+        this.cleanupFaults++;
+        this.owners.delete(owner);
+      },
+    );
+    return Object.freeze({ response, settlement });
   }
 }

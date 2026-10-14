@@ -27,6 +27,8 @@ export function assertSignupTransactionWork(tx: SignupTransaction): void {
 export interface SignupOwnerOptions {
   signal?: AbortSignal;
   profile?: 'normal' | 'recovery';
+  /** Read-path end: forbid INSERT and finish with a checked ROLLBACK, never callback success. */
+  completion?: 'commit' | 'rollback';
 }
 export interface SignupTransactionEvidence<T> {
   readonly id: string;
@@ -51,7 +53,7 @@ type OwnedClient = PoolClient & { dispose(): Promise<DisposalReceipt> };
 /** Conservative single-statement boundary; values stay separately parameterized.
  * This is ownership enforcement, not SQL authorization or a substitute for restricted roles.
  */
-function assertWorkStatement(text: string): void {
+function assertWorkStatement(text: string, rollbackOnly = false): void {
   let plain = '';
   let i = 0;
   while (i < text.length) {
@@ -97,6 +99,8 @@ function assertWorkStatement(text: string): void {
       i++;
     }
   }
+  if (rollbackOnly && !/^\s*SELECT\b/i.test(plain))
+    throw new SignupOwnerError('RECOVERY_WRITE_FORBIDDEN');
   if (!/^\s*(SELECT\b|INSERT\b|SET\s+LOCAL\b)/i.test(plain))
     throw new SignupOwnerError('TRANSACTION_CONTROL_FORBIDDEN');
 }
@@ -207,6 +211,11 @@ export async function runOwnedSignupTransaction<T>(
     return connection.query(text, values);
   };
   try {
+    if (
+      (options.completion !== undefined && !['commit', 'rollback'].includes(options.completion)) ||
+      (options.completion === 'rollback' && options.profile !== 'recovery')
+    )
+      throw new SignupOwnerError('COMPLETION_MODE_INVALID');
     unregister = registerOwner(database, record);
     if (options.signal?.aborted) throw new SignupOwnerError('OWNER_CANCELLED');
     options.signal?.addEventListener('abort', abort, { once: true });
@@ -291,7 +300,8 @@ export async function runOwnedSignupTransaction<T>(
         const pending = serial.then(async () => {
           if (stopped || fatal || record.phase !== 'WORK')
             throw new SignupOwnerError('WORK_OWNERSHIP_ENDED');
-          assertWorkStatement(typeof config === 'string' ? config : config.text);
+          const text = typeof config === 'string' ? config : config.text;
+          assertWorkStatement(text, options.completion === 'rollback');
           return connection!.query(config, values);
         });
         serial = pending.then(
@@ -325,21 +335,29 @@ export async function runOwnedSignupTransaction<T>(
     if (failures.length) throw failures[0];
     if (stopped || fatal) throw postgresFatal ?? new SignupOwnerError('WORK_OWNERSHIP_ENDED');
     activeWork.delete(tx);
-    record.phase = 'COMMIT_DISPATCH';
-    record.outcome = 'COMMIT_UNKNOWN';
-    const committed = track(
-      query('COMMIT').then((result) => {
-        if (!Array.isArray(result) && typeof result.command === 'string')
-          commandTag = result.command;
-        if (!Array.isArray(result) && result.command === 'COMMIT') record.outcome = 'COMMIT_ACK';
-        else if (!Array.isArray(result) && result.command === 'ROLLBACK')
-          record.outcome = 'COMMIT_ROLLBACK';
-        return result;
-      }),
-    );
-    await race(committed);
-    if ((record.outcome as TransactionOutcome) !== 'COMMIT_ACK')
-      throw new SignupOwnerError('COMMIT_TAG_NOT_ACKNOWLEDGED');
+    if (options.completion === 'rollback') {
+      const ended = await race(query('ROLLBACK'));
+      if (Array.isArray(ended) || ended.command !== 'ROLLBACK')
+        throw new SignupOwnerError('READ_ROLLBACK_TAG_INVALID');
+      commandTag = 'ROLLBACK';
+      record.outcome = 'ABORT_CONFIRMED';
+    } else {
+      record.phase = 'COMMIT_DISPATCH';
+      record.outcome = 'COMMIT_UNKNOWN';
+      const committed = track(
+        query('COMMIT').then((result) => {
+          if (!Array.isArray(result) && typeof result.command === 'string')
+            commandTag = result.command;
+          if (!Array.isArray(result) && result.command === 'COMMIT') record.outcome = 'COMMIT_ACK';
+          else if (!Array.isArray(result) && result.command === 'ROLLBACK')
+            record.outcome = 'COMMIT_ROLLBACK';
+          return result;
+        }),
+      );
+      await race(committed);
+      if ((record.outcome as TransactionOutcome) !== 'COMMIT_ACK')
+        throw new SignupOwnerError('COMMIT_TAG_NOT_ACKNOWLEDGED');
+    }
     record.phase = 'TERMINAL';
   } catch (error) {
     primary = { error: postgresFatal ?? error };
@@ -350,7 +368,14 @@ export async function runOwnedSignupTransaction<T>(
     const cleanup = async () => {
       if (!connection) return;
       record.phase = 'DISPOSING';
-      if (record.outcome === 'COMMIT_ACK' && !stopped && !fatal) {
+      if (
+        (record.outcome === 'COMMIT_ACK' ||
+          (options.completion === 'rollback' &&
+            record.outcome === 'ABORT_CONFIRMED' &&
+            !primary)) &&
+        !stopped &&
+        !fatal
+      ) {
         try {
           await track(
             query("SELECT set_config('transaction_timeout', $1, false)", [
