@@ -375,14 +375,12 @@ describe.skipIf(!approved)(
         ).toBe('ELIGIBLE');
         entered.resolve(Number((await tx.execute('SELECT pg_backend_pid() AS pid')).rows[0]!.pid));
         await resume.promise;
-        await tx
-          .insert(signupIdempotencyResults)
-          .values({
-            claimId: id,
-            resultVersion: 1,
-            statusCode: 202,
-            responseBody: { status: 'accepted' },
-          });
+        await tx.insert(signupIdempotencyResults).values({
+          claimId: id,
+          resultVersion: 1,
+          statusCode: 202,
+          responseBody: { status: 'accepted' },
+        });
       });
       const pid = await entered.promise;
       const terminalizer = runSignupTransaction(fixture.database(), (tx) =>

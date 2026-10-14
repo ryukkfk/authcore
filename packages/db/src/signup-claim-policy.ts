@@ -41,10 +41,19 @@ export async function assertSignupDatabaseAuthority(tx: SignupTransaction): Prom
   // This checks the connected primary, not failover lineage or acknowledged-data-loss guarantees.
 }
 export async function readSignupDatabaseClock(tx: SignupTransaction): Promise<Date> {
-  const value = (await tx.execute('SELECT clock_timestamp() AS observed_at')).rows[0]?.observed_at;
-  if (!(value instanceof Date) || !Number.isFinite(value.getTime()))
+  // Drizzle raw queries deliberately retain timestamptz strings. Use an explicit
+  // numeric server-clock representation, avoiding client timezone/date parsing.
+  const value = (
+    await tx.execute(
+      'SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS observed_ms',
+    )
+  ).rows[0]?.observed_ms;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value))
     throw new SignupProtocolError('SIGNUP_CLOCK_UNAVAILABLE');
-  return value;
+  const observed = new Date(value);
+  if (!Number.isFinite(observed.getTime()))
+    throw new SignupProtocolError('SIGNUP_CLOCK_UNAVAILABLE');
+  return observed;
 }
 export async function readSignupNamespace(
   tx: SignupTransaction,

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 
 import { type INestApplication, Logger, Module, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { ExpressAdapter } from '@nestjs/platform-express';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as passwordCrypto from '@authcore/crypto';
@@ -82,7 +83,8 @@ beforeAll(async () => {
   vi.stubEnv('REDIS_URL', 'redis://localhost:6379');
   vi.stubEnv('WEB_ORIGIN', 'http://localhost:3000');
   vi.stubEnv('SIGNUP_ENABLED', 'true');
-  app = await NestFactory.create(SignupHttpTestModule, {
+  // Preload the real HTTP adapter during module import; retain the strict hook deadline.
+  app = await NestFactory.create(SignupHttpTestModule, new ExpressAdapter(), {
     logger: false,
   });
 
