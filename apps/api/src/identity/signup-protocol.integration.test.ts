@@ -582,7 +582,7 @@ describe.skipIf(!approved)('S4 real restricted PostgreSQL, Redis and Argon2 prot
     const r = request();
     const before = await counts();
     const started = service.start(r.key, r.input);
-    expect((await complete(started)).status).toBe(500);
+    expect((await complete(started)).status).toBe(503);
     expect(started.operation.proof).toBeUndefined();
     expect(await counts()).toEqual(before);
   });

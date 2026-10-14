@@ -60,6 +60,20 @@ function mappedFailure(error: unknown): Exclude<SignupProtocolResponse, { status
   for (let depth = 0; depth < 5; depth++) {
     if (typeof current !== 'object' || current === null) break;
     if (
+      current instanceof SignupProtocolError &&
+      [
+        'SIGNUP_DATABASE_AUTHORITY_UNAVAILABLE',
+        'SIGNUP_CLOCK_UNAVAILABLE',
+        'SIGNUP_NAMESPACE_UNAVAILABLE',
+        'SIGNUP_NAMESPACE_VERSION_DRIFT',
+        'SIGNUP_NAMESPACE_ATTESTATION_DRIFT',
+        'SIGNUP_CLAIM_UNAVAILABLE',
+        'SIGNUP_RETAINED_CLAIM_CHANGED',
+        'SIGNUP_TERMINAL_UNAVAILABLE',
+      ].includes(current.code)
+    )
+      return { status: 503, code: 'SIGNUP_TEMPORARILY_UNAVAILABLE' };
+    if (
       'code' in current &&
       typeof current.code === 'string' &&
       [
@@ -67,13 +81,17 @@ function mappedFailure(error: unknown): Exclude<SignupProtocolResponse, { status
         '40P01',
         '55P03',
         '57014',
+        '25P03',
+        '25P04',
         '57P01',
         '57P02',
         '57P03',
         '08000',
         '08001',
         '08003',
+        '08004',
         '08006',
+        '08007',
         '53300',
         '53400',
       ].includes(current.code)
@@ -314,7 +332,7 @@ export class IdempotentSignupService {
         else if (t3.primary)
           finish(
             explicitInternalFailure(t3.primary.error)
-              ? { status: 500, code: 'SIGNUP_INTERNAL_FAILURE' }
+              ? mappedFailure(t3.primary.error)
               : { status: 503, code: 'SIGNUP_TEMPORARILY_UNAVAILABLE' },
           );
         else if (t2.primary && explicitInternalFailure(t2.primary.error))

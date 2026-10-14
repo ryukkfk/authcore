@@ -7,6 +7,7 @@ import {
   SignupIdempotencyResultRepository as Results,
   runOwnedSignupTransaction,
   inspectSignupClaim,
+  SignupProtocolError,
   type DatabaseClient,
   type SignupTransactionEvidence,
   type TransactionOutcome,
@@ -172,6 +173,90 @@ function setup(
 }
 afterEach(() => vi.restoreAllMocks());
 describe('S4 internal protocol proof and ownership regressions', () => {
+  it.each(['25P03', '25P04', '08004', '08007'])(
+    'correlated PostgreSQL timeout or unavailable connection %s remains retryable',
+    async (code) => {
+      const f = setup();
+      vi.mocked(inspectSignupClaim).mockRejectedValue(
+        Object.assign(new Error('private database detail'), { code }),
+      );
+      const admitted = f.start();
+      expect(await admitted.response).toEqual({
+        status: 503,
+        code: 'SIGNUP_TEMPORARILY_UNAVAILABLE',
+      });
+      await admitted.settlement;
+      expect(f.operation.proof).toBeUndefined();
+      expect(f.create).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    'SIGNUP_DATABASE_AUTHORITY_UNAVAILABLE',
+    'SIGNUP_CLOCK_UNAVAILABLE',
+    'SIGNUP_NAMESPACE_UNAVAILABLE',
+    'SIGNUP_NAMESPACE_VERSION_DRIFT',
+    'SIGNUP_NAMESPACE_ATTESTATION_DRIFT',
+    'SIGNUP_CLAIM_UNAVAILABLE',
+    'SIGNUP_RETAINED_CLAIM_CHANGED',
+    'SIGNUP_TERMINAL_UNAVAILABLE',
+  ])(
+    'unavailable authority %s fails closed without acceptance or a replacement claim',
+    async (code) => {
+      const f = setup();
+      vi.mocked(inspectSignupClaim).mockRejectedValue(new SignupProtocolError(code));
+      const admitted = f.start();
+      expect(await admitted.response).toEqual({
+        status: 503,
+        code: 'SIGNUP_TEMPORARILY_UNAVAILABLE',
+      });
+      await admitted.settlement;
+      expect(f.operation.proof).toBeUndefined();
+      expect(f.create).not.toHaveBeenCalled();
+      expect(f.boundary.reserve).toHaveBeenCalledOnce();
+      expect(runOwnedSignupTransaction).toHaveBeenCalledOnce();
+    },
+  );
+  it.each([
+    'SIGNUP_DATABASE_AUTHORITY_UNAVAILABLE',
+    'SIGNUP_CLOCK_UNAVAILABLE',
+    'SIGNUP_NAMESPACE_UNAVAILABLE',
+    'SIGNUP_NAMESPACE_VERSION_DRIFT',
+    'SIGNUP_NAMESPACE_ATTESTATION_DRIFT',
+    'SIGNUP_CLAIM_UNAVAILABLE',
+    'SIGNUP_RETAINED_CLAIM_CHANGED',
+    'SIGNUP_TERMINAL_UNAVAILABLE',
+  ])('unknown T2 plus unavailable recovery %s preserves retryable uncertainty', async (code) => {
+    const f = setup([
+      { outcome: 'COMMIT_UNKNOWN', primary: new Error('lost ACK'), cleanup: 'EVICTED' },
+      { outcome: 'NOT_SUBMITTED', primary: new SignupProtocolError(code), cleanup: 'EVICTED' },
+    ]);
+    const admitted = f.start();
+    expect(await admitted.response).toEqual({
+      status: 503,
+      code: 'SIGNUP_TEMPORARILY_UNAVAILABLE',
+    });
+    await admitted.settlement;
+    expect(f.operation.proof).toBeUndefined();
+    expect(f.create).toHaveBeenCalledOnce();
+    expect(f.boundary.reserve).toHaveBeenCalledOnce();
+    expect(runOwnedSignupTransaction).toHaveBeenCalledTimes(2);
+  });
+  it.each([
+    'SIGNUP_CLAIM_INTEGRITY_FAILURE',
+    'SIGNUP_RESULT_INTEGRITY_FAILURE',
+    'SIGNUP_TERMINAL_INTEGRITY_FAILURE',
+  ])(
+    'identified malformed retained data %s remains an internal invariant failure',
+    async (code) => {
+      const f = setup();
+      vi.mocked(inspectSignupClaim).mockRejectedValue(new SignupProtocolError(code));
+      const admitted = f.start();
+      expect(await admitted.response).toEqual({ status: 500, code: 'SIGNUP_INTERNAL_FAILURE' });
+      await admitted.settlement;
+      expect(f.operation.proof).toBeUndefined();
+      expect(f.create).not.toHaveBeenCalled();
+    },
+  );
   it('requires explicit admission before binding, hashing or database work', () => {
     const f = setup();
     expect(() => f.service.start('public_unit_key_12345', input)).toThrow(
