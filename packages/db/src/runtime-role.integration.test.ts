@@ -52,7 +52,7 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     connectionTimeoutMillis: 5_000,
   });
   const tables =
-    'public.users, public.password_credentials, public.security_audit_events, public.signup_idempotency_claims, public.signup_idempotency_results';
+    'public.users, public.password_credentials, public.security_audit_events, public.signup_idempotency_claims, public.signup_idempotency_results, public.signup_idempotency_namespace, public.signup_idempotency_terminal_events';
   const runtimeDb = drizzle(runtime);
   const claims = new SignupIdempotencyClaimRepository(runtimeDb);
   const results = new SignupIdempotencyResultRepository(runtimeDb);
@@ -113,6 +113,8 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
   }, 15_000);
 
   beforeEach(async () => {
+    await owner.query('DELETE FROM public.signup_idempotency_terminal_events');
+    await owner.query('DELETE FROM public.signup_idempotency_namespace');
     await owner.query('DELETE FROM public.signup_idempotency_results');
     await owner.query('DELETE FROM public.signup_idempotency_claims');
     await owner.query('DELETE FROM public.security_audit_events');
@@ -158,6 +160,116 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     expect((await owner.query('SELECT user_id FROM public.security_audit_events')).rows).toEqual([
       { user_id: userId },
     ]);
+  });
+
+  it('grants namespace SELECT only and detects effective PUBLIC namespace INSERT atomically', async () => {
+    await owner.query(
+      "INSERT INTO public.signup_idempotency_namespace(hmac_key_version, attestation_key_digest, attestation_payload_digest) VALUES(1, repeat('a',64), repeat('b',64))",
+    );
+    await provision();
+    const anchor = (await runtime.query('SELECT * FROM public.signup_idempotency_namespace')).rows;
+    expect(anchor).toHaveLength(1);
+    for (const statement of [
+      "INSERT INTO public.signup_idempotency_namespace(hmac_key_version, attestation_key_digest, attestation_payload_digest) VALUES(1, repeat('a',64), repeat('b',64))",
+      'UPDATE public.signup_idempotency_namespace SET hmac_key_version=2',
+      'DELETE FROM public.signup_idempotency_namespace',
+      'TRUNCATE public.signup_idempotency_namespace',
+      'SELECT * FROM public.signup_idempotency_namespace FOR UPDATE',
+    ])
+      await expect(runtime.query(statement)).rejects.toMatchObject({ code: '42501' });
+    expect((await runtime.query('SELECT * FROM public.signup_idempotency_namespace')).rows).toEqual(
+      anchor,
+    );
+    await owner.query('GRANT INSERT ON public.signup_idempotency_namespace TO PUBLIC');
+    try {
+      await expect(provision()).rejects.toThrow('Unsafe effective table privileges');
+    } finally {
+      await owner.query('REVOKE INSERT ON public.signup_idempotency_namespace FROM PUBLIC');
+    }
+  });
+
+  it('keeps terminal expiry events immutable, unique and linked to retained claims', async () => {
+    await provision();
+    const { claim } = await claims.reserve(binding(), expiry());
+    const event = (
+      await runtime.query(
+        "INSERT INTO public.signup_idempotency_terminal_events(claim_id,event_type,policy_version,observed_at) VALUES($1,'signup.expired',1,$2) RETURNING *",
+        [claim.id, claim.expiresAt],
+      )
+    ).rows[0];
+    expect(event).toMatchObject({
+      claim_id: claim.id,
+      event_type: 'signup.expired',
+      policy_version: 1,
+    });
+    for (const statement of [
+      'UPDATE public.signup_idempotency_terminal_events SET policy_version=1',
+      'DELETE FROM public.signup_idempotency_terminal_events',
+      'TRUNCATE public.signup_idempotency_terminal_events',
+      'SELECT * FROM public.signup_idempotency_terminal_events FOR UPDATE',
+    ])
+      await expect(runtime.query(statement)).rejects.toMatchObject({ code: '42501' });
+    await expect(
+      runtime.query(
+        "INSERT INTO public.signup_idempotency_terminal_events(claim_id,event_type,policy_version,observed_at) VALUES($1,'signup.expired',1,$2)",
+        [claim.id, claim.expiresAt],
+      ),
+    ).rejects.toMatchObject({ code: '23505' });
+    await expect(
+      runtime.query(
+        "INSERT INTO public.signup_idempotency_terminal_events(claim_id,event_type,policy_version,observed_at) VALUES($1,'signup.expired',1,now())",
+        [randomUUID()],
+      ),
+    ).rejects.toMatchObject({ code: '23503' });
+    await expect(
+      owner.query('DELETE FROM public.signup_idempotency_claims WHERE id=$1', [claim.id]),
+    ).rejects.toMatchObject({ code: '23503' });
+    expect(
+      (await runtime.query('SELECT * FROM public.signup_idempotency_terminal_events')).rows,
+    ).toEqual([event]);
+  });
+
+  it.each([
+    ['signup.expired', 2, 'now()'],
+    ['identity.user_created', 1, 'now()'],
+    ['signup.expired', 1, "'infinity'::timestamptz"],
+  ])('rejects unsupported terminal event shape %#', async (type, version, observed) => {
+    await provision();
+    const { claim } = await claims.reserve(binding(), expiry());
+    await expect(
+      runtime.query(
+        `INSERT INTO public.signup_idempotency_terminal_events(claim_id,event_type,policy_version,observed_at) VALUES($1,$2,$3,${observed})`,
+        [claim.id, type, version],
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('inventories all seven effective relation/column privileges without grant options', async () => {
+    await provision();
+    const inventory = (
+      await owner.query(
+        "SELECT c.relname, a.attname, has_column_privilege($1,c.oid,a.attname,'SELECT') AS readable, has_column_privilege($1,c.oid,a.attname,'INSERT') AS insertable, has_column_privilege($1,c.oid,a.attname,'UPDATE') AS updatable, has_column_privilege($1,c.oid,a.attname,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION') AS grantable FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname='public' AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname,a.attnum",
+        [roleName],
+      )
+    ).rows;
+    expect(new Set(inventory.map((row) => row.relname)).size).toBe(7);
+    for (const row of inventory)
+      expect(row).toMatchObject({
+        readable: true,
+        insertable: row.relname !== 'signup_idempotency_namespace',
+        updatable: row.relname === 'signup_idempotency_claims' && row.attname === 'lock_anchor',
+        grantable: false,
+      });
+    console.info(
+      JSON.stringify({
+        scope: 'S2_RUNTIME_INVENTORY',
+        tables: 7,
+        columns: inventory.length,
+        namespaceWrite: false,
+        mutationGrant: 'claims.lock_anchor only',
+        grantOptions: false,
+      }),
+    );
   });
 
   it.each([

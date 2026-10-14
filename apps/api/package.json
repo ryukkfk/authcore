@@ -31,6 +31,7 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^24.19.1",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "@authcore/testing": "workspace:*"
   }
 }

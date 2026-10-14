@@ -56,3 +56,19 @@ export {
   type SignupIdempotencyClaim,
   type SignupIdempotencyResult,
 } from './schema/signup-idempotency.js';
+export {
+  signupIdempotencyNamespace,
+  signupIdempotencyTerminalEvents,
+  type SignupIdempotencyNamespace,
+  type SignupIdempotencyTerminalEvent,
+} from './schema/signup-terminal.js';
+export {
+  assertSignupDatabaseAuthority,
+  readSignupDatabaseClock,
+  readSignupNamespace,
+  validateSignupClaim,
+  validateSignupResult,
+  inspectSignupClaim,
+  SignupProtocolError,
+  type SignupClaimDecision,
+} from './signup-claim-policy.js';
