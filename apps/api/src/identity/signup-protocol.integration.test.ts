@@ -111,7 +111,7 @@ describe.skipIf(!approved)('S4 real restricted PostgreSQL, Redis and Argon2 prot
     });
     const encoded = await credential(r.input.email);
     expect(await verifyPassword(encoded!, r.input.password)).toBe(true);
-    expect(encoded?.startsWith('$argon2id$v=19$m=65536,t=3,p=1$')).toBe(true);
+    expect(encoded?.startsWith('$argon2id$v=19$m=65536,p=1,t=3$')).toBe(true);
     expect(started.operation.proof?.source).toBe('T2_COMMIT_ACK');
     console.info(
       JSON.stringify({
