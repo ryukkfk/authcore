@@ -231,6 +231,9 @@ importers:
         specifier: ^7.8.2
         version: 7.8.2
     devDependencies:
+      '@authcore/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
@@ -275,6 +278,9 @@ importers:
         specifier: 8.23.1
         version: 8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b)
     devDependencies:
+      '@authcore/testing':
+        specifier: workspace:*
+        version: link:../testing
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1
@@ -287,7 +293,11 @@ importers:
 
   packages/observability: {}
 
-  packages/testing: {}
+  packages/testing:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.1
+        version: 24.19.1
 
 packages:
 

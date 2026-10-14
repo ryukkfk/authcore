@@ -12,3 +12,9 @@ export {
   type SignupIdempotencyClaim,
   type SignupIdempotencyResult,
 } from './signup-idempotency.js';
+export {
+  signupIdempotencyNamespace,
+  signupIdempotencyTerminalEvents,
+  type SignupIdempotencyNamespace,
+  type SignupIdempotencyTerminalEvent,
+} from './signup-terminal.js';

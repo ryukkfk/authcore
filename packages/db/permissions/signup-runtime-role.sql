@@ -40,7 +40,8 @@ BEGIN
   EXECUTE pg_catalog.format('GRANT USAGE ON SCHEMA public TO %I', runtime_name);
 
   FOREACH relation_name IN ARRAY ARRAY['users', 'password_credentials', 'security_audit_events',
-      'signup_idempotency_claims', 'signup_idempotency_results'] LOOP
+      'signup_idempotency_claims', 'signup_idempotency_results',
+      'signup_idempotency_namespace', 'signup_idempotency_terminal_events'] LOOP
     relation_oid := pg_catalog.to_regclass(pg_catalog.format('public.%I', relation_name));
     IF relation_oid IS NULL OR NOT EXISTS (
       SELECT 1 FROM pg_catalog.pg_class WHERE oid = relation_oid AND relkind = 'r'
@@ -55,7 +56,10 @@ BEGIN
     EXECUTE pg_catalog.format('REVOKE ALL (%s) ON TABLE public.%I FROM %I', all_columns, relation_name, runtime_name);
     -- Drizzle explicitly lists all columns, including DEFAULT expressions.
     -- PostgreSQL requires INSERT on those defaulted columns too.
-    EXECUTE pg_catalog.format('GRANT SELECT, INSERT ON TABLE public.%I TO %I', relation_name, runtime_name);
+    EXECUTE pg_catalog.format('GRANT SELECT ON TABLE public.%I TO %I', relation_name, runtime_name);
+    IF relation_name <> 'signup_idempotency_namespace' THEN
+      EXECUTE pg_catalog.format('GRANT INSERT ON TABLE public.%I TO %I', relation_name, runtime_name);
+    END IF;
     IF relation_name = 'signup_idempotency_claims' THEN
       -- SELECT FOR UPDATE requires UPDATE on at least one column. The CHECK
       -- constraint fixes this inert column to false; identity/binding stay sealed.
@@ -71,7 +75,8 @@ BEGIN
     FOR column_info IN SELECT attname FROM pg_catalog.pg_attribute
         WHERE attrelid = relation_oid AND attnum > 0 AND NOT attisdropped LOOP
       IF NOT pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname, 'SELECT')
-          OR NOT pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname, 'INSERT')
+          OR pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname, 'INSERT')
+             IS DISTINCT FROM (relation_name <> 'signup_idempotency_namespace')
           OR pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname,
              'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION')
           OR pg_catalog.has_column_privilege(runtime_name, relation_oid, column_info.attname, 'UPDATE')
@@ -94,7 +99,8 @@ BEGIN
     WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
       AND c.oid NOT IN ('public.users'::regclass, 'public.password_credentials'::regclass,
                        'public.security_audit_events'::regclass,
-                       'public.signup_idempotency_claims'::regclass, 'public.signup_idempotency_results'::regclass)
+                       'public.signup_idempotency_claims'::regclass, 'public.signup_idempotency_results'::regclass,
+                       'public.signup_idempotency_namespace'::regclass, 'public.signup_idempotency_terminal_events'::regclass)
       AND ((c.relkind IN ('r','p','v','m','f') AND (
         pg_catalog.has_table_privilege(runtime_name, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
         OR pg_catalog.has_any_column_privilege(runtime_name, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')))
@@ -108,7 +114,8 @@ BEGIN
     SELECT 1 FROM pg_catalog.pg_class c
     WHERE c.oid NOT IN ('public.users'::regclass, 'public.password_credentials'::regclass,
                        'public.security_audit_events'::regclass,
-                       'public.signup_idempotency_claims'::regclass, 'public.signup_idempotency_results'::regclass)
+                       'public.signup_idempotency_claims'::regclass, 'public.signup_idempotency_results'::regclass,
+                       'public.signup_idempotency_namespace'::regclass, 'public.signup_idempotency_terminal_events'::regclass)
       AND (EXISTS (SELECT 1 FROM pg_catalog.aclexplode(c.relacl) acl WHERE acl.grantee = runtime_role.oid)
         OR EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a,
           LATERAL pg_catalog.aclexplode(a.attacl) acl

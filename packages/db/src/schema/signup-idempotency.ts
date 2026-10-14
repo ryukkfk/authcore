@@ -4,6 +4,7 @@ import {
   check,
   foreignKey,
   integer,
+  index,
   jsonb,
   pgTable,
   smallint,
@@ -35,6 +36,7 @@ export const signupIdempotencyClaims = pgTable(
     lockAnchor: boolean('lock_anchor').default(false).notNull(),
   },
   (table) => [
+    index('signup_claims_hmac_version_idx').on(table.hmacKeyVersion),
     unique('signup_idempotency_claims_key_unique').on(
       table.keyVersion,
       table.hmacKeyVersion,
