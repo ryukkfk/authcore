@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import { acquireSignupCapacity } from './signup-capacity.js';
 import type { SignupTransaction } from './signup-transaction.js';
 import {
   SignupIdempotencyClaimRepository as Claims,
@@ -153,6 +154,7 @@ export async function inspectSignupClaim(
   if (inspected.has(tx)) throw new SignupProtocolError('SIGNUP_CLAIM_ALREADY_INSPECTED');
   inspected.add(tx);
   await assertSignupDatabaseAuthority(tx);
+  await acquireSignupCapacity(tx);
   const locked = await Claims.lockByKey(tx, binding);
   if (!locked) throw new SignupProtocolError('SIGNUP_CLAIM_UNAVAILABLE');
   // Fresh statements after the row-lock barrier; never infer history from a miss.
