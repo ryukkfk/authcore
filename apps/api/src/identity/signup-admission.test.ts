@@ -4,6 +4,8 @@ import { performance } from 'node:perf_hooks';
 import { RedisService } from '../redis/redis.service.js';
 import {
   assertSignupLease,
+  requireSignupAdmission,
+  retainSignupWorkSettlement,
   SignupAdmission,
   SignupAdmissionUnavailable,
 } from './signup-admission.js';
@@ -144,5 +146,136 @@ describe('SignupAdmission', () => {
     finish(1);
     await Promise.all(pending);
     expect(work).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('S4 independent response and retained admission', () => {
+  function gate() {
+    let resolve!: () => void;
+    return {
+      promise: new Promise<void>((done) => {
+        resolve = done;
+      }),
+      resolve: () => resolve(),
+    };
+  }
+  it('requires admission for new protocol operations and retained ownership', () => {
+    expect(() => requireSignupAdmission()).toThrow(SignupAdmissionUnavailable);
+    expect(() => retainSignupWorkSettlement(Promise.resolve())).toThrow(SignupAdmissionUnavailable);
+  });
+  it('preserves an early accepted response while all four local slots retain unsettled work', async () => {
+    const { admission, evalCommand } = setup();
+    const pending = gate();
+    const operations = Array.from({ length: 4 }, () =>
+      admission.start(async () => {
+        retainSignupWorkSettlement(pending.promise);
+        return 202;
+      }),
+    );
+    expect(await Promise.all(operations.map((value) => value.response))).toEqual([
+      202, 202, 202, 202,
+    ]);
+    expect(admission.inventory()).toMatchObject({ active: 4, owners: 4, cleanupFaults: 0 });
+    expect(() => admission.start(async () => 202)).toThrow(SignupAdmissionUnavailable);
+    expect(
+      evalCommand.mock.calls.filter(([script]) =>
+        String(script).startsWith("return redis.call('ZREM'"),
+      ),
+    ).toHaveLength(0);
+    pending.resolve();
+    await Promise.all(operations.map((value) => value.settlement));
+    expect(admission.inventory()).toMatchObject({ active: 0, owners: 0, cleanupFaults: 0 });
+  });
+  it('legacy run still waits for actual retained settlement', async () => {
+    const { admission } = setup();
+    const pending = gate();
+    const entered = gate();
+    let settled = false;
+    const response = admission
+      .run(async () => {
+        retainSignupWorkSettlement(pending.promise);
+        entered.resolve();
+        return 202;
+      })
+      .then((value) => {
+        settled = true;
+        return value;
+      });
+    await entered.promise;
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    pending.resolve();
+    expect(await response).toBe(202);
+    expect(admission.inventory().active).toBe(0);
+  });
+  it('continues renewal until retained work settles and marks an observed renewal loss', async () => {
+    vi.useFakeTimers();
+    const { admission, evalCommand } = setup();
+    const pending = gate();
+    let signal!: AbortSignal;
+    const operation = admission.start(async () => {
+      signal = requireSignupAdmission().signal;
+      retainSignupWorkSettlement(pending.promise);
+      return 202;
+    });
+    expect(await operation.response).toBe(202);
+    evalCommand.mockRejectedValueOnce(new Error('controlled renewal loss'));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(signal.aborted).toBe(true);
+    expect(admission.inventory().active).toBe(1);
+    pending.resolve();
+    await operation.settlement;
+    expect(admission.inventory().active).toBe(0);
+  });
+  it('shutdown rejects new admission and waits for retained native work', async () => {
+    const { admission } = setup();
+    const pending = gate();
+    let signal!: AbortSignal;
+    let drained = false;
+    const operation = admission.start(async () => {
+      signal = requireSignupAdmission().signal;
+      retainSignupWorkSettlement(pending.promise);
+      return 202;
+    });
+    await operation.response;
+    const shutdown = admission.onApplicationShutdown().then(() => {
+      drained = true;
+    });
+    expect(signal.aborted).toBe(true);
+    expect(drained).toBe(false);
+    expect(() => admission.start(async () => 202)).toThrow(SignupAdmissionUnavailable);
+    pending.resolve();
+    await operation.settlement;
+    await shutdown;
+    expect(drained).toBe(true);
+    expect(admission.inventory()).toMatchObject({ active: 0, owners: 0, closing: true });
+  });
+  it('retention rejection is visible as cleanup degradation without erasing accepted response', async () => {
+    const { admission } = setup();
+    const operation = admission.start(async () => {
+      retainSignupWorkSettlement(Promise.reject(new Error('controlled cleanup fault')));
+      return 202;
+    });
+    expect(await operation.response).toBe(202);
+    await operation.settlement;
+    expect(admission.inventory()).toMatchObject({ active: 0, owners: 0, cleanupFaults: 1 });
+  });
+  it('closed response context cannot start or register late work', async () => {
+    const { admission } = setup();
+    const pending = gate();
+    const operation = admission.start(async () => {
+      const late = pending.promise.then(() => {
+        expect(() => requireSignupAdmission()).toThrow(SignupAdmissionUnavailable);
+        expect(() => retainSignupWorkSettlement(Promise.resolve())).toThrow(
+          SignupAdmissionUnavailable,
+        );
+      });
+      retainSignupWorkSettlement(late);
+      return 202;
+    });
+    expect(await operation.response).toBe(202);
+    pending.resolve();
+    await operation.settlement;
+    expect(admission.inventory().active).toBe(0);
   });
 });

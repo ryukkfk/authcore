@@ -9,6 +9,7 @@ on:
       - feat/signup-s1-outcome-owner
       - feat/signup-s2-secure-reservation
       - feat/signup-s3-postgres-capacity
+      - feat/signup-s4-recovery-orchestration
   pull_request:
     branches:
       - main
@@ -16,6 +17,7 @@ on:
       - fix/pg-pool-a1-owned-disposal
       - feat/signup-s1-transaction-owner
       - feat/signup-s2-secure-reservation
+      - feat/signup-s3-postgres-capacity
 
 permissions:
   contents: read
@@ -200,6 +202,28 @@ jobs:
             assert.equal(tests.length, 14);
             assert(tests.every(test => test.status === "passed"));
             console.log("S3_REAL_CAPACITY total=14 passed=14 skipped=0");
+          '
+
+      - name: S4 real protocol atomicity recovery and process crashes
+        env:
+          S4_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -n "$TEST_DATABASE_URL"
+          test -n "$TEST_REDIS_URL"
+          test -z "${DATABASE_URL:-}"
+          pnpm --filter @authcore/api test src/identity/signup-protocol.integration.test.ts --reporter=verbose --reporter=json --outputFile.json=s4-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("apps/api/s4-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 26);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("S4_REAL_PROTOCOL total=26 passed=26 skipped=0");
           '
 
       - name: Redis integration tests

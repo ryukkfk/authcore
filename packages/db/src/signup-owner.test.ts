@@ -413,3 +413,76 @@ describe('S3 capacity under the actual owner work capability', () => {
     expect(value.queries()).toBe(1);
   });
 });
+
+describe('S4 read recovery transaction end', () => {
+  it('ends read work with one checked ROLLBACK and never exposes callback success', async () => {
+    const { database, client } = fixture();
+    const record = await runOwnedSignupTransaction(
+      database,
+      async (tx) => {
+        await tx.execute('SELECT 1');
+        return 42;
+      },
+      { profile: 'recovery', completion: 'rollback' },
+    );
+    await record.workSettlement;
+    await record.settlement;
+    expect(record.outcome).toBe('ABORT_CONFIRMED');
+    expect(record.commandTag).toBe('ROLLBACK');
+    expect(record.value).toBeUndefined();
+    expect(record.cleanup).toBe('CLEAN');
+    expect(client.query.mock.calls.filter(([q]) => q === 'ROLLBACK')).toHaveLength(1);
+    expect(client.query.mock.calls.some(([q]) => q === 'COMMIT')).toBe(false);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+  it('rejects accidental INSERT before SQL in a recovery reader', async () => {
+    const { database, client } = fixture();
+    const record = await runOwnedSignupTransaction(
+      database,
+      (tx) => tx.execute('INSERT INTO users DEFAULT VALUES'),
+      { profile: 'recovery', completion: 'rollback' },
+    );
+    await record.settlement;
+    expect(record.outcome).toBe('ABORT_CONFIRMED');
+    expect(record.primary?.error).toMatchObject({ cause: { code: 'RECOVERY_WRITE_FORBIDDEN' } });
+    expect(record.value).toBeUndefined();
+    expect(
+      client.query.mock.calls.some(([q]) => typeof q === 'object' && q.text.startsWith('INSERT')),
+    ).toBe(false);
+  });
+  it.each([
+    { completion: 'rollback' },
+    { completion: 'invalid', profile: 'recovery' },
+    { completion: 'rollback', profile: 'normal' },
+  ])('rejects invalid read-end configuration before checkout %j', async (options) => {
+    const { database, connect } = fixture();
+    const record = await runOwnedSignupTransaction(database, async () => 42, options as never);
+    await record.settlement;
+    expect(record.outcome).toBe('NOT_SUBMITTED');
+    expect(record.primary?.error).toMatchObject({ code: 'COMPLETION_MODE_INVALID' });
+    expect(connect).not.toHaveBeenCalled();
+  });
+  it('a read rollback failure cannot erase a previously validated external proof', async () => {
+    const { database, client } = fixture();
+    const original = client.query.getMockImplementation()!;
+    const fault = new Error('read rollback fault');
+    const proof = new AcceptedProofLatch<number>();
+    client.query.mockImplementation((command) =>
+      command === 'ROLLBACK' ? Promise.reject(fault) : original(command),
+    );
+    const record = await runOwnedSignupTransaction(
+      database,
+      async () => {
+        proof.accept(202);
+        return 42;
+      },
+      { profile: 'recovery', completion: 'rollback' },
+    );
+    await record.settlement;
+    expect(proof.proof).toBe(202);
+    expect(record.primary?.error).toBe(fault);
+    expect(record.value).toBeUndefined();
+    expect(record.cleanup).toBe('EVICTED');
+    expect(client.dispose).toHaveBeenCalledOnce();
+  });
+});
