@@ -21,7 +21,14 @@ export async function createReservationFixture(approved: URL) {
   const role = 's2_runtime_' + randomUUID().replaceAll('-', '');
   const inventoryUrl = new URL(approved);
   inventoryUrl.searchParams.set('application_name', name + '_inventory');
-  const admin = createDatabaseClient({ connectionString: inventoryUrl.toString() });
+  const idleErrors: Error[] = [];
+  const observePool = (client: DatabaseClient) => {
+    // Do not let EventEmitter serialize a client (including test credentials).
+    // An unexpected idle error still fails fixture cleanup; it is never ignored.
+    client.pool.on('error', () => idleErrors.push(new Error('S2 unexpected idle pool error')));
+    return client;
+  };
+  const admin = observePool(createDatabaseClient({ connectionString: inventoryUrl.toString() }));
   const target = new URL(approved);
   target.pathname = '/' + name;
   target.searchParams.set('application_name', name);
@@ -51,7 +58,7 @@ export async function createReservationFixture(approved: URL) {
     throw new Error('S2 fixture target rejected');
   console.info(JSON.stringify({ scope: 'S2', stage: 'before', inventory: before }));
   const database = (url = runtimeUrl) => {
-    const value = createDatabaseClient({ connectionString: url.toString() });
+    const value = observePool(createDatabaseClient({ connectionString: url.toString() }));
     clients.add(value);
     return value;
   };
@@ -67,12 +74,6 @@ export async function createReservationFixture(approved: URL) {
     );
   async function close() {
     const errors: unknown[] = [];
-    for (const proxy of proxies)
-      try {
-        await proxy.close();
-      } catch (error) {
-        errors.push(error);
-      }
     for (const value of clients) {
       try {
         await bounded(drainSignupTransactionOwners(value), 'S2 owner drain');
@@ -85,6 +86,13 @@ export async function createReservationFixture(approved: URL) {
         errors.push(error);
       }
     }
+    // End all pool-owned idle/active transports before destroying their proxy.
+    for (const proxy of proxies)
+      try {
+        await proxy.close();
+      } catch (error) {
+        errors.push(error);
+      }
     try {
       const deadline = performance.now() + 5000;
       while ((await inventory()).sessions.length && performance.now() < deadline)
@@ -104,6 +112,7 @@ export async function createReservationFixture(approved: URL) {
     } finally {
       await admin.pool.end();
     }
+    errors.push(...idleErrors);
     if (errors.length) throw new AggregateError(errors, 'S2 fixture cleanup failed');
   }
   try {
