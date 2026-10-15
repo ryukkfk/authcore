@@ -18,7 +18,15 @@ const reports = [
 const identities = new Map();
 const steps = [];
 for (const report of reports) {
-  const data = JSON.parse(await readFile(report, 'utf8'));
+  let data;
+  try {
+    data = JSON.parse(await readFile(report, 'utf8'));
+  } catch {
+    // Preserve an explicitly incomplete artifact on early CI failure, without
+    // copying raw exception, row or request data into the evidence artifact.
+    steps.push({ report, passed: 0, skipped: 0, failed: 0, success: false, unavailable: true });
+    continue;
+  }
   let passed = 0,
     skipped = 0,
     failed = 0;

@@ -149,6 +149,7 @@ describe.skipIf(!approved)('S5 real HTTP PostgreSQL Redis idempotency contract',
       await other.query('ROLLBACK');
       accepted(await send(app, r));
       expect(await f.writes()).toEqual({
+        ...before,
         users: before.users + 1,
         credentials: before.credentials + 1,
         audits: before.audits + 1,

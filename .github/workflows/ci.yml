@@ -278,6 +278,7 @@ jobs:
           '
 
       - name: S6 unique coverage and guarded-test reconciliation
+        if: always()
         run: node scripts/summarize-phase-b-ci.mjs
 
       - name: Preserve sanitized validation counts
