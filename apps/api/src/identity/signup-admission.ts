@@ -88,6 +88,10 @@ export class SignupAdmission {
     for (const owner of this.owners) owner.signal.abort();
     await Promise.all([...this.owners].map((owner) => owner.settlement));
   }
+  // Nest finishes all before-shutdown hooks before database/Redis application teardown.
+  async beforeApplicationShutdown(): Promise<void> {
+    await this.onApplicationShutdown();
+  }
 
   constructor(@Inject(RedisService) private readonly redis: RedisService) {}
 

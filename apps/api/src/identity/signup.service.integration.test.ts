@@ -17,7 +17,7 @@ import type { DatabaseService } from '../database/database.service.js';
 import { assertSignupLease, SignupAdmission, SIGNUP_RENEW_MS } from './signup-admission.js';
 import type { RedisService } from '../redis/redis.service.js';
 import { EmailAlreadyInUseError } from './identity.errors.js';
-import { SignupService } from './signup.service.js';
+import { SignupService } from './signup-phase-a.test-support.js';
 
 // Explicit opt-in only. Never use DATABASE_URL or application tables for tests.
 const connectionString = process.env.TEST_DATABASE_URL;
@@ -43,7 +43,7 @@ if (connectionString) {
   }
 }
 
-describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () => {
+describe.skipIf(!connectionString)('Phase A historical PostgreSQL regression', () => {
   const databaseName = `signup_test_${randomUUID().replaceAll('-', '')}`;
   const testUrl = new URL(connectionString ?? 'postgresql://localhost/postgres');
   testUrl.pathname = `/${databaseName}`;
@@ -426,7 +426,10 @@ describe.skipIf(!connectionString)('SignupService PostgreSQL integration', () =>
 
   it('commits a normalized user, verifiable credential and exactly one safe audit event', async () => {
     const user = await service.signup(input);
-    expect(user).toMatchObject({ email: 'User@Example.COM', emailNormalized: 'user@example.com' });
+    expect(user).toMatchObject({
+      email: 'User@Example.COM',
+      emailNormalized: 'user@example.com',
+    });
     expect(await users.findByNormalizedEmail('user@example.com')).toEqual(user);
     const credential = await credentials.findByUserId(user.id);
     expect(credential?.passwordHash).toMatch(/^\$argon2id\$/);

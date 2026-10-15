@@ -7,6 +7,7 @@ import {
   SignupIdempotencyResultRepository as Results,
   runOwnedSignupTransaction,
   inspectSignupClaim,
+  assertSignupDomainPrivileges,
   SignupProtocolError,
   type DatabaseClient,
   type SignupTransactionEvidence,
@@ -26,6 +27,7 @@ vi.mock('@authcore/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authcore/db')>()),
   runOwnedSignupTransaction: vi.fn(),
   inspectSignupClaim: vi.fn(),
+  assertSignupDomainPrivileges: vi.fn(),
 }));
 const binding = Object.freeze({
   keyVersion: 1,
@@ -82,6 +84,7 @@ function setup(
   }[] = [{ outcome: 'COMMIT_ACK' }],
 ) {
   vi.mocked(runOwnedSignupTransaction).mockReset();
+  vi.mocked(assertSignupDomainPrivileges).mockReset().mockResolvedValue(undefined);
   vi.mocked(inspectSignupClaim).mockReset().mockResolvedValue({ kind: 'ELIGIBLE', claim });
   vi.mocked(runOwnedSignupTransaction).mockImplementation((async (
     _database: unknown,
@@ -173,6 +176,20 @@ function setup(
 }
 afterEach(() => vi.restoreAllMocks());
 describe('S4 internal protocol proof and ownership regressions', () => {
+  it('missing required domain privileges rejects new execution before account-dependent writes', async () => {
+    const f = setup();
+    vi.mocked(assertSignupDomainPrivileges).mockRejectedValue(
+      new SignupProtocolError('SIGNUP_REQUIRED_PRIVILEGE_UNAVAILABLE'),
+    );
+    const admitted = f.start();
+    expect(await admitted.response).toEqual({ status: 500, code: 'SIGNUP_INTERNAL_FAILURE' });
+    await admitted.settlement;
+    expect(f.create).not.toHaveBeenCalled();
+    expect(f.credential).not.toHaveBeenCalled();
+    expect(f.audit).not.toHaveBeenCalled();
+    expect(f.accepted).not.toHaveBeenCalled();
+    expect(f.operation.proof).toBeUndefined();
+  });
   it.each(['25P03', '25P04', '08004', '08007'])(
     'correlated PostgreSQL timeout or unavailable connection %s remains retryable',
     async (code) => {

@@ -12,6 +12,7 @@ import {
   createDatabaseClient,
   PasswordCredentialRepository,
   SecurityAuditEventRepository,
+  signupOwnerInventory,
   UserRepository,
 } from '@authcore/db';
 
@@ -24,7 +25,10 @@ import { SignupAdmissionInterceptor } from './signup-admission.interceptor.js';
 import { SignupEnabledGuard } from './signup-enabled.guard.js';
 import { SignupRateLimitGuard } from './signup-rate-limit.guard.js';
 import { SignupRateLimiter } from './signup-rate-limiter.js';
-import { SignupService } from './signup.service.js';
+import { SignupService, SIGNUP_CONFIGURATION } from './signup.service.js';
+import { SignupKeyGuard } from './signup-key.guard.js';
+import { configureSignupHttp, SignupHttpAdapter } from './signup-http.js';
+import { testSignupConfiguration } from './signup-reservation.test-support.js';
 
 // Explicit E2E config, no .env loading, no fallback to the application's URL.
 const connectionString = process.env.TEST_DATABASE_URL;
@@ -75,7 +79,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
   let keys: Set<string>;
   let acquireCount: number;
   let renewFailures: number;
-  let releases: { token: string; emails: string[]; openTransactions: number }[];
+  let releases: { token: string; emails: string[]; localOwners: number }[];
   const input = { email: 'lease@example.com', password: 'correct horse battery staple' };
   const admissionKey = () => `${namespace}:admission`;
 
@@ -116,6 +120,15 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       await database.pool.query(await readFile(new URL(name, folder), 'utf8'));
     }
     // This explicit prerequisite is confined to the suite's disposable database.
+    const configuration = testSignupConfiguration();
+    await database.pool.query(
+      'INSERT INTO signup_idempotency_namespace(id,hmac_key_version,attestation_key_digest,attestation_payload_digest) VALUES(1,$1,$2,$3)',
+      [
+        configuration.metadata.hmacKeyVersion,
+        configuration.metadata.keyDigest,
+        configuration.metadata.payloadDigest,
+      ],
+    );
     await database.pool.query(`REVOKE TEMPORARY ON DATABASE "${databaseName}" FROM PUBLIC`);
     permissionsSql = await readFile(
       new URL('../../../../packages/db/permissions/signup-runtime-role.sql', import.meta.url),
@@ -150,13 +163,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
           emails: (await database.pool.query('SELECT email_normalized FROM users')).rows.map(
             (row) => String(row.email_normalized),
           ),
-          openTransactions: Number(
-            (
-              await database.pool.query(`SELECT count(*)::int AS n
-            FROM pg_stat_activity WHERE datname = current_database()
-            AND pid <> pg_backend_pid() AND xact_start IS NOT NULL`)
-            ).rows[0].n,
-          ),
+          localOwners: signupOwnerInventory(runtime).length,
         });
       }
       const reply = await redis
@@ -176,6 +183,11 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       providers: [
         SignupService,
         SignupEnabledGuard,
+        SignupKeyGuard,
+        {
+          provide: SIGNUP_CONFIGURATION,
+          useValue: { hmac: configuration, executionWindowMs: 86400000 },
+        },
         SignupRateLimitGuard,
         SignupRateLimiter,
         SignupAdmission,
@@ -185,7 +197,11 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       ],
     })
     class IsolatedSignupModule {}
-    app = await NestFactory.create(IsolatedSignupModule, { logger: false });
+    app = await NestFactory.create(IsolatedSignupModule, new SignupHttpAdapter(), {
+      logger: false,
+      bodyParser: false,
+    });
+    configureSignupHttp(app);
     vi.stubEnv('SIGNUP_ENABLED', 'false');
     app.setGlobalPrefix('api/v1');
     app.useGlobalPipes(
@@ -221,6 +237,13 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
   });
 
   afterEach(async () => {
+    // Observe actual settlement separately from the now-independent HTTP response.
+    await expect
+      .poll(() => app!.get(SignupAdmission).inventory().active, { timeout: 8000 })
+      .toBe(0);
+    await expect
+      .poll(() => app!.get(SignupAdmission).inventory().owners, { timeout: 8000 })
+      .toBe(0);
     vi.restoreAllMocks();
     for (const key of keys) {
       await redis.del(key);
@@ -257,9 +280,25 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
   const send = (email = input.email) =>
     fetch(`${baseUrl}/api/v1/auth/signup`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'e2e_' + randomUUID() },
       body: JSON.stringify({ ...input, email }),
     });
+  async function assertRemoteTransactionsSettled() {
+    // A1 local transport closure is not synchronous server-side rollback proof.
+    // Observe the HTTP writer's actual backend, excluding owner/witness queries.
+    await expect
+      .poll(async () =>
+        Number(
+          (
+            await database.pool.query(
+              'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND usename = $1 AND xact_start IS NOT NULL',
+              [runtimeRole],
+            )
+          ).rows[0].n,
+        ),
+      )
+      .toBe(0);
+  }
   async function unavailable(response: Response) {
     expect(response.status).toBe(503);
     expect(response.headers.get('retry-after')).toBe('1');
@@ -318,18 +357,25 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         await expect.poll(() => renewFailures, { interval: 10 }).toBe(1);
         const replacement = `replacement-${randomUUID()}`;
         await redis.zAdd(admissionKey(), { score: Date.now() + 30_000, value: replacement });
-        expect(settled).toBe(false);
+        await expect.poll(() => settled).toBe(true);
+        expect(app!.get(SignupAdmission).inventory().active).toBe(1);
         expect(releases).toHaveLength(0);
-        expect(
-          (
-            await database.pool.query(
-              "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction'",
-            )
-          ).rows[0].n,
-        ).toBe(1);
+        // Cancellation evicts SQL ownership promptly while the paused callback is still retained.
+        await expect
+          .poll(async () =>
+            Number(
+              (
+                await database.pool.query(
+                  "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction'",
+                )
+              ).rows[0].n,
+            ),
+          )
+          .toBe(0);
         finish.open();
         await unavailable(await pending);
-        expect(releases).toEqual([{ token, emails: [], openTransactions: 0 }]);
+        await expect.poll(() => releases).toEqual([{ token, emails: [], localOwners: 0 }]);
+        await assertRemoteTransactionsSettled();
         expect(await redis.zRange(admissionKey(), 0, -1)).toEqual([replacement]);
         expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
         expect(
@@ -350,7 +396,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(
           1,
         );
-        expect(await redis.zCard(admissionKey())).toBe(0);
+        await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
       } finally {
         finish.open();
         await pending;
@@ -383,9 +429,9 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       expect(releases).toHaveLength(0);
       finish.open();
       for (const response of await Promise.all(pending)) await unavailable(response);
-      expect(releases).toHaveLength(4);
+      await expect.poll(() => releases.length).toBe(4);
       expect(releases.every((release) => release.emails.length === 0)).toBe(true);
-      expect(await redis.zCard(admissionKey())).toBe(0);
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
       expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
       expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(
         0,
@@ -396,7 +442,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       // Clear only this test's rate-limit keys to exercise post-failure reuse.
       for (const key of keys) if (key !== admissionKey()) await redis.del(key);
       expect((await send()).status).toBe(202);
-      expect(await redis.zCard(admissionKey())).toBe(0);
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
     } finally {
       finish.open();
       await Promise.all(pending);
@@ -414,10 +460,11 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         expect(await response.json()).toEqual({
           error: { code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
         });
-        expect(releases).toHaveLength(1);
+        await expect.poll(() => releases.length).toBe(1);
         expect(releases[0]!.emails).toEqual([]);
-        expect(releases[0]!.openTransactions).toBe(0);
-        expect(await redis.zCard(admissionKey())).toBe(0);
+        expect(releases[0]!.localOwners).toBe(0);
+        await assertRemoteTransactionsSettled();
+        await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
         expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
         expect(
           (await database.pool.query('SELECT * FROM security_audit_events')).rows,
@@ -434,7 +481,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         await database.pool.query(`ALTER TABLE ${table} DROP CONSTRAINT e2e_reject`);
       }
       expect((await send()).status).toBe(202);
-      expect(await redis.zCard(admissionKey())).toBe(0);
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
       expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(
         1,
       );
@@ -450,7 +497,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
     expect(events).toHaveLength(1);
     const duplicate = await fetch(`${baseUrl}/api/v1/auth/signup`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'e2e_' + randomUUID() },
       body: JSON.stringify({ email: 'LEASE@EXAMPLE.COM', password: 'a different secure password' }),
     });
     expect(duplicate.status).toBe(202);
@@ -503,9 +550,10 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         event: 'http.unhandled_exception',
         method: 'POST',
       });
-      expect(releases).toHaveLength(1);
-      expect(releases[0]).toMatchObject({ emails: [], openTransactions: 0 });
-      expect(await redis.zCard(admissionKey())).toBe(0);
+      await expect.poll(() => releases.length).toBe(1);
+      expect(releases[0]).toMatchObject({ emails: [], localOwners: 0 });
+      await assertRemoteTransactionsSettled();
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
     } finally {
       await provisionRuntime();
     }

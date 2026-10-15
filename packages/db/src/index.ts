@@ -64,6 +64,7 @@ export {
 } from './schema/signup-terminal.js';
 export {
   assertSignupDatabaseAuthority,
+  assertSignupDomainPrivileges,
   readSignupDatabaseClock,
   readSignupNamespace,
   validateSignupClaim,

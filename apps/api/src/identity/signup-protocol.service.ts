@@ -11,6 +11,7 @@ import {
   SignupOwnerError,
   SignupProtocolError,
   inspectSignupClaim,
+  assertSignupDomainPrivileges,
   runOwnedSignupTransaction,
   validateSignupClaim,
   validateSignupResult,
@@ -254,6 +255,8 @@ export class IdempotentSignupService {
             if (decision.kind !== 'ELIGIBLE')
               throw new SignupProtocolError('SIGNUP_EXECUTION_POLICY_INVALID');
             if (!passwordHash) throw new SignupReservationUnavailable();
+            assertLive();
+            await assertSignupDomainPrivileges(tx);
             assertLive();
             let created: Awaited<ReturnType<UserRepository['create']>> | undefined;
             // Only the reviewed JS duplicate error is caught; SQL failures still abort the owner.
