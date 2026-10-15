@@ -12,6 +12,7 @@ import {
   createDatabaseClient,
   PasswordCredentialRepository,
   SecurityAuditEventRepository,
+  signupOwnerInventory,
   UserRepository,
 } from '@authcore/db';
 
@@ -78,7 +79,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
   let keys: Set<string>;
   let acquireCount: number;
   let renewFailures: number;
-  let releases: { token: string; emails: string[]; openTransactions: number }[];
+  let releases: { token: string; emails: string[]; localOwners: number }[];
   const input = { email: 'lease@example.com', password: 'correct horse battery staple' };
   const admissionKey = () => `${namespace}:admission`;
 
@@ -162,13 +163,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
           emails: (await database.pool.query('SELECT email_normalized FROM users')).rows.map(
             (row) => String(row.email_normalized),
           ),
-          openTransactions: Number(
-            (
-              await database.pool.query(`SELECT count(*)::int AS n
-            FROM pg_stat_activity WHERE datname = current_database()
-            AND pid <> pg_backend_pid() AND xact_start IS NOT NULL`)
-            ).rows[0].n,
-          ),
+          localOwners: signupOwnerInventory(runtime).length,
         });
       }
       const reply = await redis
@@ -288,6 +283,22 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       headers: { 'content-type': 'application/json', 'idempotency-key': 'e2e_' + randomUUID() },
       body: JSON.stringify({ ...input, email }),
     });
+  async function assertRemoteTransactionsSettled() {
+    // A1 local transport closure is not synchronous server-side rollback proof.
+    // Observe the HTTP writer's actual backend, excluding owner/witness queries.
+    await expect
+      .poll(async () =>
+        Number(
+          (
+            await database.pool.query(
+              'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND usename = $1 AND xact_start IS NOT NULL',
+              [runtimeRole],
+            )
+          ).rows[0].n,
+        ),
+      )
+      .toBe(0);
+  }
   async function unavailable(response: Response) {
     expect(response.status).toBe(503);
     expect(response.headers.get('retry-after')).toBe('1');
@@ -363,7 +374,8 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
           .toBe(0);
         finish.open();
         await unavailable(await pending);
-        await expect.poll(() => releases).toEqual([{ token, emails: [], openTransactions: 0 }]);
+        await expect.poll(() => releases).toEqual([{ token, emails: [], localOwners: 0 }]);
+        await assertRemoteTransactionsSettled();
         expect(await redis.zRange(admissionKey(), 0, -1)).toEqual([replacement]);
         expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
         expect(
@@ -450,7 +462,8 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         });
         await expect.poll(() => releases.length).toBe(1);
         expect(releases[0]!.emails).toEqual([]);
-        expect(releases[0]!.openTransactions).toBe(0);
+        expect(releases[0]!.localOwners).toBe(0);
+        await assertRemoteTransactionsSettled();
         await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
         expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
         expect(
@@ -538,7 +551,8 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         method: 'POST',
       });
       await expect.poll(() => releases.length).toBe(1);
-      expect(releases[0]).toMatchObject({ emails: [], openTransactions: 0 });
+      expect(releases[0]).toMatchObject({ emails: [], localOwners: 0 });
+      await assertRemoteTransactionsSettled();
       await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
     } finally {
       await provisionRuntime();
