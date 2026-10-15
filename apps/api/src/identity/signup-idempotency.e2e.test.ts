@@ -20,6 +20,8 @@ import { SignupRateLimitGuard } from './signup-rate-limit.guard.js';
 import { SignupRateLimiter } from './signup-rate-limiter.js';
 import { SignupAdmissionInterceptor } from './signup-admission.interceptor.js';
 import { testSignupConfiguration } from './signup-reservation.test-support.js';
+import { RedisService } from '../redis/redis.service.js';
+import { createRedisOutageProxy } from './redis-outage.test-support.js';
 const approved =
   process.env.S5_POSTGRES_APPROVED === 'true'
     ? approvedTestUrl(process.env.TEST_DATABASE_URL, process.env.DATABASE_URL)
@@ -86,6 +88,225 @@ function raw(
   );
 }
 describe.skipIf(!approved)('S5 real HTTP PostgreSQL Redis idempotency contract', () => {
+  it('S6 a real restricted-role deadlock returns retryable503 without partial domain writes and a synchronized retry succeeds', async () => {
+    const role = '"' + f.runtimeUrl.username + '"';
+    // Test-owned role only: detect this cycle before the unchanged 1s lock budget.
+    await f.owner.pool.query('ALTER ROLE ' + role + " SET deadlock_timeout = '20ms'");
+    const other = await f.owner.pool.connect();
+    let waiting: Promise<unknown> | undefined;
+    try {
+      const app = await ready();
+      const r = fresh(),
+        before = await f.writes();
+      const namespace = createHash('sha256').update(randomUUID()).digest().readInt32BE(0);
+      await other.query('BEGIN');
+      await other.query("SET LOCAL statement_timeout = '2000ms'");
+      const pid = Number((await other.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+      await other.query('SELECT pg_advisory_xact_lock($1,2)', [namespace]);
+      const original = UserRepository.prototype.create;
+      let state: unknown;
+      vi.spyOn(UserRepository.prototype, 'create').mockImplementationOnce(async function (
+        this: UserRepository,
+        input,
+      ) {
+        // Use the actual repository transaction, retaining slot/claim lock order.
+        const transaction = Reflect.get(this, 'db') as { execute(text: string): Promise<unknown> };
+        await transaction.execute(`SELECT pg_advisory_xact_lock(${namespace},1)`);
+        waiting = other.query('SELECT pg_advisory_xact_lock($1,1)', [namespace]);
+        void waiting.catch(() => {});
+        await expect
+          .poll(
+            async () =>
+              (
+                await f.owner.pool.query(
+                  'SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',
+                  [pid],
+                )
+              ).rows[0]?.wait_event_type,
+          )
+          .toBe('Lock');
+        try {
+          await transaction.execute(`SELECT pg_advisory_xact_lock(${namespace},2)`);
+        } catch (error) {
+          let cause: unknown = error;
+          for (let depth = 0; depth < 5 && typeof cause === 'object' && cause !== null; depth++) {
+            if ('code' in cause && cause.code === '40P01') {
+              state = cause.code;
+              break;
+            }
+            cause = 'cause' in cause ? cause.cause : undefined;
+          }
+          throw error;
+        }
+        return original.call(this, input);
+      });
+      const reply = await send(app, r);
+      expect(state).toBe('40P01');
+      expect(reply.status).toBe(503);
+      expect(reply.headers['retry-after']).toBe('1');
+      expect(await f.writes()).toEqual(before);
+      await waiting;
+      await other.query('ROLLBACK');
+      accepted(await send(app, r));
+      expect(await f.writes()).toEqual({
+        users: before.users + 1,
+        credentials: before.credentials + 1,
+        audits: before.audits + 1,
+        results: before.results + 1,
+      });
+      console.info(
+        JSON.stringify({
+          scope: 'S6_REAL_DEADLOCK',
+          sqlstate: state,
+          failedResponse: 503,
+          retry: 202,
+          partialWrites: 0,
+        }),
+      );
+    } finally {
+      try {
+        await waiting?.catch(() => {});
+        await other.query('ROLLBACK');
+      } finally {
+        other.release();
+        await f.owner.pool.query('ALTER ROLE ' + role + ' RESET deadlock_timeout');
+      }
+    }
+  });
+  it('S6 malformed UTF-8 is rejected before rate admission hashing or durable reservation', async () => {
+    const app = await ready();
+    const before = await f.writes();
+    const claims = Number(
+      (await f.owner.pool.query('SELECT count(*)::int AS n FROM signup_idempotency_claims')).rows[0]
+        .n,
+    );
+    const hash = vi.spyOn(crypto, 'hashPassword');
+    const body = Buffer.concat([
+      Buffer.from('{"email":"u@example.com","password":"public '),
+      Buffer.from([0xc3, 0x28]),
+      Buffer.from(' password fixture"}'),
+    ]);
+    const reply = await raw(app.url, body, { 'Idempotency-Key': fresh().key });
+    expect(reply.status).toBe(400);
+    expect(reply.body).toBe('{"error":{"code":"HTTP_400","message":"Invalid signup request"}}');
+    expect(reply.headers['cache-control']).toBe('no-store');
+    expect(app.rateCalls).toBe(0);
+    expect(app.admissionAcquires).toBe(0);
+    expect(hash).not.toHaveBeenCalled();
+    expect(await f.writes()).toEqual(before);
+    expect(
+      Number(
+        (await f.owner.pool.query('SELECT count(*)::int AS n FROM signup_idempotency_claims'))
+          .rows[0].n,
+      ),
+    ).toBe(claims);
+  });
+  it('S6 real Redis transport outage fails closed and recovered replay preserves the committed acceptance', async () => {
+    const proxy = await createRedisOutageProxy(f.redisUrl);
+    vi.stubEnv('REDIS_URL', proxy.url.toString());
+    const source = new RedisService();
+    vi.stubEnv('REDIS_URL', f.redisUrl.toString());
+    let app: HttpFixture | undefined;
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      await source.getClient();
+      app = await startSignupHttp(f, f.database(), true, source);
+      apps.add(app);
+      const r = fresh();
+      accepted(await send(app, r));
+      await expect.poll(() => app!.admission.inventory().active).toBe(0);
+      const before = await f.writes();
+      await proxy.outage();
+      const reply = await send(app, r);
+      expect(reply.status).toBe(503);
+      expect(reply.headers['retry-after']).toBe('1');
+      expect(reply.headers['cache-control']).toBe('no-store');
+      expect(reply.body).toBe(
+        '{"error":{"code":"HTTP_503","message":"Signup temporarily unavailable"}}',
+      );
+      expect(app.admissionAcquires).toBe(1);
+      expect(await f.writes()).toEqual(before);
+      proxy.restore();
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await (await source.getClient()).ping();
+            } catch {
+              return 'UNAVAILABLE';
+            }
+          },
+          { timeout: 5000 },
+        )
+        .toBe('PONG');
+      const hash = vi.spyOn(crypto, 'hashPassword');
+      accepted(await send(app, r));
+      expect(hash).not.toHaveBeenCalled();
+      expect(await f.writes()).toEqual(before);
+      expect(
+        warn.mock.calls.every((call) => call.length === 1 && call[0] === 'Redis connection error'),
+      ).toBe(true);
+      console.info(
+        JSON.stringify({
+          scope: 'S6_REDIS_OUTAGE',
+          unavailable: 503,
+          replay: 202,
+          duplicateWrites: 0,
+        }),
+      );
+    } finally {
+      proxy.restore();
+      try {
+        await app?.close();
+      } finally {
+        source.onApplicationShutdown();
+        await proxy.close();
+      }
+    }
+  });
+  it('S6 actual Nest shutdown stays pending while native hashing is retained and starts no T2', async () => {
+    const app = await ready();
+    const before = await f.writes();
+    const entered = deferred<void>(),
+      gate = deferred<void>();
+    const original = crypto.hashPassword;
+    vi.spyOn(crypto, 'hashPassword').mockImplementation(async (password) => {
+      const native = original(password);
+      entered.resolve();
+      await gate.promise;
+      return native;
+    });
+    const pending = send(app);
+    let closed = false;
+    let closing: Promise<void> | undefined;
+    try {
+      await bounded(entered.promise, 'S6 native hash entered');
+      closing = app.close().then(() => {
+        closed = true;
+      });
+      await expect.poll(() => app.admission.inventory().closing).toBe(true);
+      const reply = await pending;
+      expect(reply.status).toBe(503);
+      expect(app.admission.inventory().active).toBe(1);
+      expect(closed).toBe(false);
+      expect(await f.writes()).toEqual(before);
+    } finally {
+      gate.resolve();
+      await pending;
+      await closing;
+    }
+    expect(closed).toBe(true);
+    expect(app.admission.inventory()).toMatchObject({ active: 0, owners: 0 });
+    expect(await f.writes()).toEqual(before);
+    console.info(
+      JSON.stringify({
+        scope: 'S6_HTTP_SHUTDOWN',
+        retainedNativeWork: true,
+        ownersAfter: 0,
+        domainWrites: 0,
+      }),
+    );
+  });
   it('a client disconnected during real rate-limit waiting starts no late reservation or hashing', async () => {
     const app = await ready();
     const r = fresh();

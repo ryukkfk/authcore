@@ -42,7 +42,16 @@ export function signupHttpFailure(response: Response, status: number, message: s
 
 /** Install before app.init/listen with Nest bodyParser:false. All parser errors are sanitized. */
 export function configureSignupHttp(app: INestApplication): void {
-  const parser = json({ limit: SIGNUP_BODY_BYTES, inflate: false, strict: true });
+  const parser = json({
+    limit: SIGNUP_BODY_BYTES,
+    inflate: false,
+    strict: true,
+    // Reject invalid transport bytes before Express's permissive decoder can
+    // silently change the credential bound by frozen HMAC v1. No normalization.
+    verify: (_request, _response, buffer) => {
+      new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    },
+  });
   app.use((request: Request, response: Response, next: () => void) => {
     if (!isSignupRequest(request)) return next();
     response.setHeader('Cache-Control', 'no-store');

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Logger } from '@nestjs/common';
 
 const client = vi.hoisted(() => ({
   isReady: false,
@@ -22,9 +23,24 @@ import { RedisService } from './redis.service.js';
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 describe('Redis outage connection pressure', () => {
+  it('a throwing diagnostic sink cannot escape a transport error listener', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {
+      throw new Error('log sink fault');
+    });
+    client.connect.mockRejectedValue(new Error('synthetic outage'));
+    const service = new RedisService();
+    await expect(service.getClient()).rejects.toThrow('Redis connection unavailable');
+    const listener = client.on.mock.calls.find((call) => call[0] === 'error')?.[1] as () => void;
+    expect(listener).toBeTypeOf('function');
+    expect(() => listener()).not.toThrow();
+    expect(warn).toHaveBeenCalledExactlyOnceWith('Redis connection error');
+    expect(service.loggingDiagnostics()).toEqual({ loggingFaults: 1 });
+    service.onApplicationShutdown();
+  });
   it('shares one failed attempt and bounds repeated outage attempts by cooldown', async () => {
     vi.useFakeTimers();
     client.connect.mockRejectedValue(new Error('synthetic outage'));

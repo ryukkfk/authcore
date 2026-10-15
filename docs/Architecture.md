@@ -1,5 +1,9 @@
 # AuthCore Architecture
 
+Stacked Phase B candidate (2026-10-15): see [Phase B Implementation](Phase%20B%20Implementation.md)
+for implemented A1/S1–S6 architecture and review/activation gates. The checkpoint
+below describes historical merged-main, not the pending candidate. Signup remains off.
+
 Implementation checkpoint (reviewed 2026-10-12): [Development Status](Development%20Status.md) records
 PR #7 transactional audit, PR #8 database permission provisioning, and PR #9
 Phase A signup idempotency foundation merged at `d51559cf`. [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583)

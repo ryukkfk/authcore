@@ -1,5 +1,9 @@
 # AuthCore Threat Model
 
+Stacked Phase B candidate (2026-10-15): [implementation threat/failure evidence](Phase%20B%20Failure%20Matrix.md)
+maps T01–T17 and F01–F28, distinguishing real/synthetic tests from operational gates.
+The historical baseline below is not independent approval of this candidate.
+
 Implementation checkpoint (2026-10-12): this model includes **planned** controls.
 PR #7 implemented transactional signup audit, PR #8 merged restricted-role
 provisioning, and PR #9 merged inactive Phase A idempotency ledger primitives.

@@ -37,6 +37,7 @@ export class RedisService implements OnApplicationShutdown {
   private connectionPromise: Promise<void> | null = null;
   private retryAt = 0;
   private stopped = false;
+  private loggingFaults = 0;
   private readonly connected = new WeakSet<NodeRedisClient>();
 
   constructor() {
@@ -94,7 +95,12 @@ export class RedisService implements OnApplicationShutdown {
     client.on('error', () => {
       this.retire(client);
       // Never log connection strings or raw errors.
-      this.logger.warn('Redis connection error');
+      try {
+        this.logger.warn('Redis connection error');
+      } catch {
+        // A failed diagnostic sink cannot interrupt transport retirement.
+        this.loggingFaults = Math.min(Number.MAX_SAFE_INTEGER, this.loggingFaults + 1);
+      }
     });
     return client;
   }
@@ -188,5 +194,9 @@ export class RedisService implements OnApplicationShutdown {
   onApplicationShutdown(): void {
     this.stopped = true;
     if (this.client) this.retire(this.client);
+  }
+
+  loggingDiagnostics() {
+    return Object.freeze({ loggingFaults: this.loggingFaults });
   }
 }
