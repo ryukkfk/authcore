@@ -248,7 +248,7 @@ jobs:
             const result = JSON.parse(readFileSync("apps/api/s5-http-results.json", "utf8"));
             const tests = result.testResults.flatMap(file => file.assertionResults);
             assert.equal(result.success, true);
-            assert.equal(tests.length, 52);
+            assert.equal(tests.length, 53);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S5_REAL_HTTP total=52 passed=52 skipped=0");
+            console.log("S5_REAL_HTTP total=53 passed=53 skipped=0");
           '

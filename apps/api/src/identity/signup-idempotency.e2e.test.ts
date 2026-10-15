@@ -15,6 +15,10 @@ import { createProtocolFixture, type ProtocolFixture } from './signup-protocol.t
 import { startSignupHttp } from './signup-http.test-support.js';
 import { SIGNUP_BODY_BYTES } from './signup-http.js';
 import { SignupService } from './signup.service.js';
+import type { Response as ExpressResponse } from 'express';
+import { SignupRateLimitGuard } from './signup-rate-limit.guard.js';
+import { SignupRateLimiter } from './signup-rate-limiter.js';
+import { SignupAdmissionInterceptor } from './signup-admission.interceptor.js';
 import { testSignupConfiguration } from './signup-reservation.test-support.js';
 const approved =
   process.env.S5_POSTGRES_APPROVED === 'true'
@@ -47,6 +51,8 @@ function raw(
           method: 'POST',
           headers: Array.isArray(headers)
             ? [
+                'Host',
+                new URL(url).host,
                 'Content-Type',
                 'application/json',
                 ...(chunked
@@ -80,6 +86,80 @@ function raw(
   );
 }
 describe.skipIf(!approved)('S5 real HTTP PostgreSQL Redis idempotency contract', () => {
+  it('a client disconnected during real rate-limit waiting starts no late reservation or hashing', async () => {
+    const app = await ready();
+    const r = fresh();
+    const before = await f.writes();
+    const beforeClaims = Number(
+      (await f.owner.pool.query('SELECT count(*)::int AS n FROM signup_idempotency_claims')).rows[0]
+        .n,
+    );
+    const rateEntered = deferred<void>(),
+      continueRate = deferred<void>(),
+      closed = deferred<void>(),
+      intercepted = deferred<void>();
+    const guard = SignupRateLimitGuard.prototype.canActivate;
+    vi.spyOn(SignupRateLimitGuard.prototype, 'canActivate').mockImplementation(function (
+      this: SignupRateLimitGuard,
+      context,
+    ) {
+      context
+        .switchToHttp()
+        .getResponse<ExpressResponse>()
+        .once('close', () => closed.resolve());
+      return guard.call(this, context);
+    });
+    const consume = SignupRateLimiter.prototype.consume;
+    vi.spyOn(SignupRateLimiter.prototype, 'consume').mockImplementation(async function (
+      this: SignupRateLimiter,
+      address,
+    ) {
+      const result = await consume.call(this, address);
+      rateEntered.resolve();
+      await continueRate.promise;
+      return result;
+    });
+    const intercept = SignupAdmissionInterceptor.prototype.intercept;
+    vi.spyOn(SignupAdmissionInterceptor.prototype, 'intercept').mockImplementation(function (
+      this: SignupAdmissionInterceptor,
+      context,
+      next,
+    ) {
+      const result = intercept.call(this, context, next);
+      intercepted.resolve();
+      return result;
+    });
+    const hash = vi.spyOn(crypto, 'hashPassword');
+    const cancellation = new AbortController();
+    const pending = fetch(app.url + '/api/v1/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': r.key },
+      body: JSON.stringify(r.input),
+      signal: cancellation.signal,
+    }).catch(() => undefined);
+    try {
+      await bounded(rateEntered.promise, 'S5 real rate operation entered');
+      cancellation.abort();
+      await pending;
+      await bounded(closed.promise, 'S5 response closed before interceptor');
+      continueRate.resolve();
+      await bounded(intercepted.promise, 'S5 late interceptor observed');
+      await expect.poll(() => app.admission.inventory().active, { timeout: 5000 }).toBe(0);
+      expect(hash).not.toHaveBeenCalled();
+      expect(app.rateCalls).toBe(1);
+      expect(await f.writes()).toEqual(before);
+      expect(
+        Number(
+          (await f.owner.pool.query('SELECT count(*)::int AS n FROM signup_idempotency_claims'))
+            .rows[0].n,
+        ),
+      ).toBe(beforeClaims);
+    } finally {
+      continueRate.resolve();
+      cancellation.abort();
+      await pending;
+    }
+  });
   it.each(['password_credentials', 'security_audit_events'])(
     'missing %s INSERT privilege gives the same fixed failure for new and existing accounts while preserving accepted replay',
     async (table) => {

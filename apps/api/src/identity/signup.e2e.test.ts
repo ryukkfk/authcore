@@ -384,7 +384,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(
           1,
         );
-        expect(await redis.zCard(admissionKey())).toBe(0);
+        await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
       } finally {
         finish.open();
         await pending;
@@ -419,7 +419,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       for (const response of await Promise.all(pending)) await unavailable(response);
       await expect.poll(() => releases.length).toBe(4);
       expect(releases.every((release) => release.emails.length === 0)).toBe(true);
-      expect(await redis.zCard(admissionKey())).toBe(0);
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
       expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
       expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(
         0,
@@ -430,7 +430,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       // Clear only this test's rate-limit keys to exercise post-failure reuse.
       for (const key of keys) if (key !== admissionKey()) await redis.del(key);
       expect((await send()).status).toBe(202);
-      expect(await redis.zCard(admissionKey())).toBe(0);
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
     } finally {
       finish.open();
       await Promise.all(pending);
@@ -451,7 +451,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         await expect.poll(() => releases.length).toBe(1);
         expect(releases[0]!.emails).toEqual([]);
         expect(releases[0]!.openTransactions).toBe(0);
-        expect(await redis.zCard(admissionKey())).toBe(0);
+        await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
         expect((await database.pool.query('SELECT * FROM users')).rows).toHaveLength(0);
         expect(
           (await database.pool.query('SELECT * FROM security_audit_events')).rows,
@@ -468,7 +468,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
         await database.pool.query(`ALTER TABLE ${table} DROP CONSTRAINT e2e_reject`);
       }
       expect((await send()).status).toBe(202);
-      expect(await redis.zCard(admissionKey())).toBe(0);
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
       expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toHaveLength(
         1,
       );
@@ -539,7 +539,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       });
       await expect.poll(() => releases.length).toBe(1);
       expect(releases[0]).toMatchObject({ emails: [], openTransactions: 0 });
-      expect(await redis.zCard(admissionKey())).toBe(0);
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
     } finally {
       await provisionRuntime();
     }

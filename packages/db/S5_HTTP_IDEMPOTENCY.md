@@ -104,7 +104,7 @@ does not lock PostgreSQL ACLs or guarantee equivalence under every infrastructur
 
 ## Required validation and remaining gates
 
-The required real HTTP suite contains the9 retained baseline cases plus43 Phase B
+The required real HTTP suite contains the9 retained baseline cases plus44 Phase B
 cases: raw duplicate/case/OWS/header limits, Unicode and exact body bounds, slow
 headers/uploads, malformed/deep DTOs, quotas, disabled behavior, identical/conflicting
 retries, T1/T2 lost ACK, missing-result503, cleanup/cancellation, privilege-based

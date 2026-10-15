@@ -27,6 +27,8 @@ export class SignupAdmissionInterceptor implements NestInterceptor {
     };
     request.once('aborted', abort);
     response.once('close', disconnected);
+    // Rate limiting may have awaited after the client already disconnected.
+    if (request.aborted || response.destroyed || request.socket.destroyed) abort();
     setSignupRequestSignal(request, cancellation.signal);
     const remove = () => {
       request.removeListener('aborted', abort);
