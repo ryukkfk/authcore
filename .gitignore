@@ -9,6 +9,20 @@ build/
 
 coverage/
 
+# Generated validation evidence; publish only the sanitized CI summary artifact.
+**/workspace-results.json
+**/postgres-results.json
+**/redis-results.json
+**/a1-results.json
+**/s1-pool-results.json
+**/s0-results.json
+**/s2-results.json
+**/s3-results.json
+**/s4-results.json
+**/s6-lifecycle-results.json
+**/s5-http-results.json
+/phase-b-validation-summary.json
+
 *.log
 
 .DS_Store

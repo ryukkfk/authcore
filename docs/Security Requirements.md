@@ -1,5 +1,10 @@
 # AuthCore Security Requirements
 
+Stacked Phase B candidate (2026-10-15): [implementation and decisions](Phase%20B%20Implementation.md)
+and [failure/threat evidence](Phase%20B%20Failure%20Matrix.md) document candidate controls
+and remaining independent/operational gates. AUTH-001 is still incomplete and
+`SIGNUP_ENABLED=false` remains the source default. No live migration or role adoption is implied.
+
 Implementation checkpoint (2026-10-12): [Development Status](Development%20Status.md) documents PR #7,
 PR #8 and PR #9 integrated at the reviewed `d51559cf` revision and successful
 [CI #21](https://github.com/ryukkfk/authcore/actions/runs/38075918583).

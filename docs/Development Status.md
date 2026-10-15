@@ -1,5 +1,10 @@
 # AuthCore Development Status
 
+Pending Phase B stack (2026-10-15): A1 PR #14, S1 #13, S2 #15, S3 #16,
+S4 #18 and S5 #19 are development candidates. S6 hardening and review mapping:
+[Phase B Implementation](Phase%20B%20Implementation.md). This does not change the
+historical merged-main checkpoint below, authorize activation or complete AUTH-001.
+
 Last updated: 2026-10-12 (Asia/Rangoon)
 
 Reviewed implementation baseline (before this documentation integration):
@@ -50,13 +55,13 @@ PR #8 later merged, and PR #9 expanded provisioning to **five** tables and
 
 Historical candidate local and exact-head CI evidence:
 
-| Check | 2026-10-10 result |
-| --- | --- |
-| Lint, build, typecheck | PASS |
-| Workspace tests | 168 passed |
+| Check                                        | 2026-10-10 result                     |
+| -------------------------------------------- | ------------------------------------- |
+| Lint, build, typecheck                       | PASS                                  |
+| Workspace tests                              | 168 passed                            |
 | PostgreSQL repository/permission integration | 55 passed (30 permission regressions) |
-| Dedicated Redis integration | 28 passed |
-| Combined HTTP/Redis/PostgreSQL E2E | 9 passed (2 added permission cases) |
+| Dedicated Redis integration                  | 28 passed                             |
+| Combined HTTP/Redis/PostgreSQL E2E           | 9 passed (2 added permission cases)   |
 
 Total **260 distinct passed tests**; the 17 signup PostgreSQL cases already
 included in workspace tests are not added again. The candidate head

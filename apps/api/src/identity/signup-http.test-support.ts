@@ -23,6 +23,7 @@ export async function startSignupHttp(
   f: ProtocolFixture,
   database: DatabaseClient = f.database(),
   enabled = true,
+  redisSource: RedisService = f.redis,
 ) {
   const namespace = 'authcore:test:{signup-s5-' + randomUUID() + '}';
   const keys = new Set<string>();
@@ -37,7 +38,7 @@ export async function startSignupHttp(
     });
     if (script.includes('ipLimit')) rateCalls++;
     if (script.includes('ZCARD')) admissionAcquires++;
-    const client = await f.redis.getClient();
+    const client = await redisSource.getClient();
     return client.withCommandOptions({ timeout: 1000 }).eval(script, { ...args, keys: mapped });
   };
   const redis = {
@@ -97,6 +98,18 @@ export async function startSignupHttp(
     const client = await f.redis.getClient();
     for (const key of keys) if (!key.endsWith(':admission')) await client.del(key);
   };
+  let closing: Promise<void> | undefined;
+  const close = () =>
+    (closing ??= (async () => {
+      await app.close();
+      if (admission.inventory().active || admission.inventory().owners)
+        throw new Error('S5 admission retained');
+      const client = await f.redis.getClient();
+      for (const key of keys) {
+        await client.del(key);
+        if (await client.exists(key)) throw new Error('S5 owned Redis key retained');
+      }
+    })());
   return {
     app,
     database,
@@ -109,15 +122,6 @@ export async function startSignupHttp(
       return admissionAcquires;
     },
     clearOwnedRate,
-    async close() {
-      await app.close();
-      if (admission.inventory().active || admission.inventory().owners)
-        throw new Error('S5 admission retained');
-      const client = await f.redis.getClient();
-      for (const key of keys) {
-        await client.del(key);
-        if (await client.exists(key)) throw new Error('S5 owned Redis key retained');
-      }
-    },
+    close,
   };
 }

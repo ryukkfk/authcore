@@ -11,6 +11,7 @@ on:
       - feat/signup-s3-postgres-capacity
       - feat/signup-s4-recovery-orchestration
       - feat/signup-s5-http-idempotency
+      - feat/signup-s6-security-hardening
   pull_request:
     branches:
       - main
@@ -19,8 +20,8 @@ on:
       - feat/signup-s1-transaction-owner
       - feat/signup-s2-secure-reservation
       - feat/signup-s3-postgres-capacity
-
       - feat/signup-s4-recovery-orchestration
+      - feat/signup-s5-http-idempotency
 permissions:
   contents: read
 
@@ -60,16 +61,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 12.8.1
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
@@ -93,6 +94,12 @@ jobs:
 
       - name: Type check
         run: pnpm typecheck
+
+      - name: S6 production artifact and default security boundary
+        run: node scripts/verify-phase-b-artifact.mjs
+
+      - name: S6 disposable PostgreSQL log privacy
+        run: node scripts/configure-disposable-ci-postgres.mjs
 
       - name: A1 real PostgreSQL driver disposal
         env:
@@ -137,10 +144,10 @@ jobs:
           '
 
       - name: Test
-        run: pnpm test
+        run: pnpm test --reporter=default --reporter=json --outputFile.json=workspace-results.json
 
       - name: PostgreSQL integration tests
-        run: pnpm --filter @authcore/db test:integration
+        run: pnpm --filter @authcore/db test:integration --reporter=default --reporter=json --outputFile.json=postgres-results.json
 
       - name: S1 real PostgreSQL outcome and inherited S0 verification
         env:
@@ -229,7 +236,24 @@ jobs:
           '
 
       - name: Redis integration tests
-        run: pnpm --filter @authcore/api test:redis
+        run: pnpm --filter @authcore/api test:redis --reporter=default --reporter=json --outputFile.json=redis-results.json
+
+      - name: S6 real idle backend lifecycle
+        env:
+          S6_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          pnpm --filter @authcore/api test src/database/database-lifecycle.integration.test.ts --reporter=verbose --reporter=json --outputFile.json=s6-lifecycle-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("apps/api/s6-lifecycle-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 1);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("S6_REAL_LIFECYCLE total=1 passed=1 skipped=0");
+          '
 
       - name: Signup HTTP Redis PostgreSQL E2E tests
         env:
@@ -248,7 +272,20 @@ jobs:
             const result = JSON.parse(readFileSync("apps/api/s5-http-results.json", "utf8"));
             const tests = result.testResults.flatMap(file => file.assertionResults);
             assert.equal(result.success, true);
-            assert.equal(tests.length, 53);
+            assert.equal(tests.length, 57);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S5_REAL_HTTP total=53 passed=53 skipped=0");
+            console.log("S5_S6_REAL_HTTP total=57 passed=57 skipped=0");
           '
+
+      - name: S6 unique coverage and guarded-test reconciliation
+        if: always()
+        run: node scripts/summarize-phase-b-ci.mjs
+
+      - name: Preserve sanitized validation counts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: phase-b-validation-${{ github.run_id }}
+          path: phase-b-validation-summary.json
+          if-no-files-found: warn
+          retention-days: 30
