@@ -10,13 +10,15 @@ import { parseEnvironment } from '@authcore/config';
 
 import { AppModule } from './app.module.js';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter.js';
+import { configureSignupHttp, SignupHttpAdapter } from './identity/signup-http.js';
 
 loadEnvFile(resolve(process.cwd(), '../../.env'));
 
 const environment = parseEnvironment(process.env);
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, new SignupHttpAdapter(), { bodyParser: false });
+  configureSignupHttp(app);
 
   app.setGlobalPrefix('api/v1');
   app.enableShutdownHooks();

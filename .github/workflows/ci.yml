@@ -10,6 +10,7 @@ on:
       - feat/signup-s2-secure-reservation
       - feat/signup-s3-postgres-capacity
       - feat/signup-s4-recovery-orchestration
+      - feat/signup-s5-http-idempotency
   pull_request:
     branches:
       - main
@@ -19,6 +20,7 @@ on:
       - feat/signup-s2-secure-reservation
       - feat/signup-s3-postgres-capacity
 
+      - feat/signup-s4-recovery-orchestration
 permissions:
   contents: read
 
@@ -230,4 +232,23 @@ jobs:
         run: pnpm --filter @authcore/api test:redis
 
       - name: Signup HTTP Redis PostgreSQL E2E tests
-        run: pnpm --filter @authcore/api test:e2e
+        env:
+          S5_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -n "$TEST_DATABASE_URL"
+          test -n "$TEST_REDIS_URL"
+          test -z "${DATABASE_URL:-}"
+          pnpm --filter @authcore/api test:e2e --reporter=verbose --reporter=json --outputFile.json=s5-http-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("apps/api/s5-http-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 52);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("S5_REAL_HTTP total=52 passed=52 skipped=0");
+          '

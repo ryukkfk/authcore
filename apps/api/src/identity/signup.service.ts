@@ -1,67 +1,57 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
-
-import { hashPassword } from '@authcore/crypto';
 import {
-  DuplicateUserEmailError,
-  PasswordCredentialRepository,
-  SecurityAuditEventRepository,
-  setSignupTransactionTimeouts,
-  runSignupTransaction,
-  UserRepository,
-  type User,
-} from '@authcore/db';
-
+  Inject,
+  Injectable,
+  Optional,
+  ServiceUnavailableException,
+  type OnModuleInit,
+} from '@nestjs/common';
+import { parseEnvironment } from '@authcore/config';
+import type { SignupHmacConfiguration } from '@authcore/crypto';
 import { DatabaseService } from '../database/database.service.js';
-import { normalizeEmail } from './email.js';
-import { EmailAlreadyInUseError } from './identity.errors.js';
-import { assertSignupLease } from './signup-admission.js';
+import { createSignupReservationBoundary } from './signup-reservation.js';
+import { IdempotentSignupService, type SignupProtocolResponse } from './signup-protocol.service.js';
 
 export interface SignupInput {
   email: string;
   password: string;
 }
+export interface SignupRuntimeConfiguration {
+  readonly hmac: SignupHmacConfiguration;
+  readonly executionWindowMs: number;
+}
+export const SIGNUP_CONFIGURATION = Symbol('SIGNUP_CONFIGURATION');
 
+/** Explicit DI wiring only. No environment secret source, fallback or anchor creation. */
 @Injectable()
-export class SignupService {
-  private readonly logger = new Logger(SignupService.name);
-
-  constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
-
-  /** Internal application operation. The API boundary must validate signup input. */
-  async signup(input: SignupInput): Promise<User> {
-    assertSignupLease();
-    const email = input.email.trim();
-    const emailNormalized = normalizeEmail(email);
-    // Do expensive hashing before borrowing a connection or taking database locks.
-    const passwordHash = await hashPassword(input.password);
-    assertSignupLease();
-
-    let user: User;
-    try {
-      user = await runSignupTransaction(this.database.getClient(), async (tx) => {
-        assertSignupLease();
-        await setSignupTransactionTimeouts(tx);
-        assertSignupLease();
-        // All three writes borrow exactly this transaction/connection.
-        const users = new UserRepository(tx);
-        const credentials = new PasswordCredentialRepository(tx);
-        const auditEvents = new SecurityAuditEventRepository(tx);
-        const created = await users.create({ email, emailNormalized });
-        assertSignupLease();
-        await credentials.create({ userId: created.id, passwordHash });
-        assertSignupLease();
-        await auditEvents.recordUserCreated({ userId: created.id });
-        assertSignupLease();
-        return created;
-      });
-    } catch (error: unknown) {
-      if (error instanceof DuplicateUserEmailError) throw new EmailAlreadyInUseError();
-      throw error;
-    }
-
-    // Operational log only. The transaction's security_audit_events row is the
-    // durable source of truth; this log is neither required nor sufficient for it.
-    this.logger.log({ event: 'identity.user_created', userId: user.id });
-    return user;
+export class SignupService implements OnModuleInit {
+  private readonly enabled = parseEnvironment(process.env).SIGNUP_ENABLED;
+  private protocol?: IdempotentSignupService;
+  constructor(
+    @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Optional()
+    @Inject(SIGNUP_CONFIGURATION)
+    private readonly configuration?: SignupRuntimeConfiguration,
+  ) {}
+  async onModuleInit(): Promise<void> {
+    if (!this.enabled) return;
+    if (!this.configuration) throw new Error('SIGNUP_HMAC_CONFIGURATION_REQUIRED');
+    const boundary = await createSignupReservationBoundary(this.database.getClient(), {
+      enabled: this.enabled,
+      ...(this.configuration
+        ? {
+            configuration: this.configuration.hmac,
+            executionWindowMs: this.configuration.executionWindowMs,
+          }
+        : {}),
+    });
+    if (boundary) this.protocol = new IdempotentSignupService(this.database.getClient(), boundary);
+  }
+  async signup(
+    input: SignupInput,
+    rawKey: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<SignupProtocolResponse> {
+    if (!this.protocol) throw new ServiceUnavailableException('Signup temporarily unavailable');
+    return this.protocol.start(rawKey, input, options).response;
   }
 }

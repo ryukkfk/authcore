@@ -14,7 +14,7 @@ import {
 
 import { DatabaseService } from '../database/database.service.js';
 import { EmailAlreadyInUseError } from './identity.errors.js';
-import { SignupService } from './signup.service.js';
+import { SignupService } from './signup-phase-a.test-support.js';
 import { SignupAdmission, SignupAdmissionUnavailable } from './signup-admission.js';
 import { RedisService } from '../redis/redis.service.js';
 
@@ -81,7 +81,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('SignupService', () => {
+describe('Historical Phase A SignupService regression fixture', () => {
   it('propagates an audit insert failure after credential creation without logging success', async () => {
     const { service, insert, createCredential, audit } = setup();
     const failure = new Error('audit insert failed');

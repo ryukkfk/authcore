@@ -4,6 +4,8 @@ import { AuthController } from './auth.controller.js';
 import type { SignupDto } from './dto/signup.dto.js';
 import { EmailAlreadyInUseError } from './identity.errors.js';
 import type { SignupService } from './signup.service.js';
+import type { Request } from 'express';
+const request = { rawHeaders: ['Idempotency-Key', 'public_unit_fixture_key_12345'] } as Request;
 
 const input: SignupDto = {
   email: 'user@example.com',
@@ -27,23 +29,21 @@ describe('AuthController', () => {
   it('returns a generic response after signup', async () => {
     const { controller, signup } = createController();
 
-    signup.mockResolvedValue(undefined);
+    signup.mockResolvedValue({ status: 202, body: { status: 'accepted' } });
 
-    await expect(controller.signup(input)).resolves.toEqual({
+    await expect(controller.signup(input, request)).resolves.toEqual({
       status: 'accepted',
     });
 
-    expect(signup).toHaveBeenCalledWith(input);
+    expect(signup).toHaveBeenCalledWith(input, 'public_unit_fixture_key_12345', {});
   });
 
-  it('returns the same response for duplicate email', async () => {
+  it('cannot fabricate acceptance from an unexpected legacy duplicate error', async () => {
     const { controller, signup } = createController();
 
     signup.mockRejectedValue(new EmailAlreadyInUseError());
 
-    await expect(controller.signup(input)).resolves.toEqual({
-      status: 'accepted',
-    });
+    await expect(controller.signup(input, request)).rejects.toBeInstanceOf(EmailAlreadyInUseError);
   });
 
   it('does not hide unexpected failures', async () => {
@@ -53,6 +53,6 @@ describe('AuthController', () => {
 
     signup.mockRejectedValue(error);
 
-    await expect(controller.signup(input)).rejects.toBe(error);
+    await expect(controller.signup(input, request)).rejects.toBe(error);
   });
 });

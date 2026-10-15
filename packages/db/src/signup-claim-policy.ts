@@ -56,6 +56,21 @@ export async function readSignupDatabaseClock(tx: SignupTransaction): Promise<Da
     throw new SignupProtocolError('SIGNUP_CLOCK_UNAVAILABLE');
   return observed;
 }
+/** Equal prerequisite for every new execution, before account-dependent duplicate handling.
+ * A later concurrent administrative grant change remains an operational containment concern.
+ * Previously committed accepted proof must be observed before calling this gate.
+ */
+export async function assertSignupDomainPrivileges(tx: SignupTransaction): Promise<void> {
+  const permitted = (
+    await tx.execute(
+      "SELECT bool_and(pg_catalog.has_table_privilege(current_user, relation, 'SELECT') AND " +
+        "pg_catalog.has_table_privilege(current_user, relation, 'INSERT')) AS permitted " +
+        "FROM (VALUES ('public.users'), ('public.password_credentials'), " +
+        "('public.security_audit_events'), ('public.signup_idempotency_results')) AS required(relation)",
+    )
+  ).rows[0]?.permitted;
+  if (permitted !== true) throw new SignupProtocolError('SIGNUP_REQUIRED_PRIVILEGE_UNAVAILABLE');
+}
 export async function readSignupNamespace(
   tx: SignupTransaction,
 ): Promise<SignupIdempotencyNamespace> {

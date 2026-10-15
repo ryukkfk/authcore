@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { isSignupRequest } from '../../identity/signup-http.js';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -16,9 +17,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const http = host.switchToHttp();
     const response = http.getResponse<Response>();
     const request = http.getRequest<Request>();
+    const signup = isSignupRequest(request);
+    if (signup) response.setHeader('Cache-Control', 'no-store');
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
+      if (signup && status === 503) response.setHeader('Retry-After', '1');
       const exceptionResponse = exception.getResponse();
 
       let message = 'Request failed';
@@ -42,7 +46,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       response.status(status).json({
         error: {
           code: `HTTP_${status}`,
-          message,
+          message:
+            signup && status === 400 && message !== 'Invalid Idempotency-Key'
+              ? 'Invalid signup request'
+              : message,
         },
       });
 

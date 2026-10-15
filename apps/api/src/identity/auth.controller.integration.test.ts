@@ -4,7 +4,6 @@ import type { AddressInfo } from 'node:net';
 
 import { type INestApplication, Logger, Module, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { ExpressAdapter } from '@nestjs/platform-express';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as passwordCrypto from '@authcore/crypto';
@@ -12,7 +11,8 @@ import * as passwordCrypto from '@authcore/crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { GlobalExceptionFilter } from '../common/filters/global-exception.filter.js';
 import { AuthController } from './auth.controller.js';
-import { EmailAlreadyInUseError } from './identity.errors.js';
+import { configureSignupHttp, SignupHttpAdapter } from './signup-http.js';
+import { SignupKeyGuard } from './signup-key.guard.js';
 import { SignupService } from './signup.service.js';
 import { SignupEnabledGuard } from './signup-enabled.guard.js';
 import { SignupRateLimitGuard } from './signup-rate-limit.guard.js';
@@ -43,6 +43,7 @@ const rateLimitProvider = {
   providers: [
     SignupService,
     SignupEnabledGuard,
+    SignupKeyGuard,
     SignupRateLimitGuard,
     rateLimitProvider,
     ...admissionProviders,
@@ -63,12 +64,16 @@ class DisabledSignupHttpTestModule {}
   controllers: [AuthController],
   providers: [
     SignupEnabledGuard,
+    SignupKeyGuard,
     SignupRateLimitGuard,
     rateLimitProvider,
     ...admissionProviders,
     {
       provide: SignupService,
-      useValue: { signup },
+      useValue: {
+        signup: async (input: unknown) =>
+          (await signup(input)) ?? { status: 202, body: { status: 'accepted' } },
+      },
     },
   ],
 })
@@ -84,9 +89,11 @@ beforeAll(async () => {
   vi.stubEnv('WEB_ORIGIN', 'http://localhost:3000');
   vi.stubEnv('SIGNUP_ENABLED', 'true');
   // Preload the real HTTP adapter during module import; retain the strict hook deadline.
-  app = await NestFactory.create(SignupHttpTestModule, new ExpressAdapter(), {
+  app = await NestFactory.create(SignupHttpTestModule, new SignupHttpAdapter(), {
     logger: false,
+    bodyParser: false,
   });
+  configureSignupHttp(app);
 
   app.setGlobalPrefix('api/v1');
 
@@ -135,6 +142,7 @@ async function sendSignup(body: unknown, headers: Record<string, string> = {}) {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
+      'idempotency-key': 'public_http_fixture_key_12345',
       ...headers,
     },
     body: JSON.stringify(body),
@@ -216,7 +224,15 @@ describe('POST /api/v1/auth/signup', () => {
       transaction.mockReset().mockRejectedValue(new Error('Database access is forbidden'));
       let disabledApp: INestApplication | undefined;
       try {
-        disabledApp = await NestFactory.create(DisabledSignupHttpTestModule, { logger: false });
+        disabledApp = await NestFactory.create(
+          DisabledSignupHttpTestModule,
+          new SignupHttpAdapter(),
+          {
+            logger: false,
+            bodyParser: false,
+          },
+        );
+        configureSignupHttp(disabledApp);
         disabledApp.setGlobalPrefix('api/v1');
         disabledApp.useGlobalPipes(
           new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
@@ -281,7 +297,7 @@ describe('POST /api/v1/auth/signup', () => {
         const response = await sendSignup(input);
 
         expect(response.status).toBe(503);
-        expect(response.headers.get('retry-after')).toBeNull();
+        expect(response.headers.get('retry-after')).toBe('1');
         expect(await response.json()).toEqual({
           error: { code: 'HTTP_503', message: 'Signup temporarily unavailable' },
         });
@@ -338,7 +354,8 @@ describe('POST /api/v1/auth/signup', () => {
   it.each(['success', 'duplicate', 'validation', 'exception'])(
     'releases the owned admission token after %s',
     async (outcome) => {
-      if (outcome === 'duplicate') signup.mockRejectedValue(new EmailAlreadyInUseError());
+      if (outcome === 'duplicate')
+        signup.mockResolvedValue({ status: 202, body: { status: 'accepted' } });
       else if (outcome === 'exception') signup.mockRejectedValue(new Error('unexpected'));
       else signup.mockResolvedValue(undefined);
       const response = await sendSignup(
@@ -406,7 +423,10 @@ describe('POST /api/v1/auth/signup', () => {
         `${baseUrl}/api/v1/auth/signup?token=query-secret-sentinel&password=query-password-sentinel`,
         {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': 'public_http_fixture_key_12345',
+          },
           body: JSON.stringify(validInput),
         },
       );
@@ -445,7 +465,7 @@ describe('POST /api/v1/auth/signup', () => {
     const success = await sendSignup(validInput);
     const successBody = await success.text();
 
-    signup.mockRejectedValueOnce(new EmailAlreadyInUseError());
+    signup.mockResolvedValueOnce({ status: 202, body: { status: 'accepted' } });
 
     const duplicate = await sendSignup(validInput);
     const duplicateBody = await duplicate.text();
