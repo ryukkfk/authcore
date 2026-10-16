@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   UserRepository,
+  VerificationEventRepository,
   PasswordCredentialRepository,
   SecurityAuditEventRepository,
   SignupIdempotencyResultRepository as Results,
@@ -124,6 +125,15 @@ function setup(
       payload: {},
       occurredAt: claim.createdAt,
     });
+  const verification = vi
+    .spyOn(VerificationEventRepository.prototype, 'requestInitial')
+    .mockResolvedValue({
+      id: claim.id,
+      userId: claim.id,
+      reason: 'signup',
+      eventType: 'identity.email_verification_requested',
+      createdAt: claim.createdAt,
+    });
   const accepted = vi
     .spyOn(Results.prototype, 'recordAccepted')
     .mockResolvedValue({ ...result, responseBody: { status: 'accepted' } });
@@ -164,6 +174,7 @@ function setup(
     hash,
     create,
     credential,
+    verification,
     audit,
     accepted,
     admission,
@@ -176,6 +187,29 @@ function setup(
 }
 afterEach(() => vi.restoreAllMocks());
 describe('S4 internal protocol proof and ownership regressions', () => {
+  it('requires durable verification intent in T2 before audit and accepted proof', async () => {
+    const f = setup();
+    const admitted = f.start();
+    expect(await admitted.response).toEqual({ status: 202, body: { status: 'accepted' } });
+    await admitted.settlement;
+    expect(f.verification).toHaveBeenCalledExactlyOnceWith(claim.id);
+    expect(f.verification.mock.invocationCallOrder[0]).toBeGreaterThan(
+      f.credential.mock.invocationCallOrder[0]!,
+    );
+    expect(f.accepted.mock.invocationCallOrder[0]).toBeGreaterThan(
+      f.verification.mock.invocationCallOrder[0]!,
+    );
+  });
+  it('does not latch acceptance when the mandatory verification intent fails', async () => {
+    const f = setup();
+    f.verification.mockRejectedValue(new Error('Synthetic outbox write failure'));
+    const admitted = f.start();
+    expect(await admitted.response).toEqual({ status: 500, code: 'SIGNUP_INTERNAL_FAILURE' });
+    await admitted.settlement;
+    expect(f.audit).not.toHaveBeenCalled();
+    expect(f.accepted).not.toHaveBeenCalled();
+    expect(f.operation.proof).toBeUndefined();
+  });
   it('missing required domain privileges rejects new execution before account-dependent writes', async () => {
     const f = setup();
     vi.mocked(assertSignupDomainPrivileges).mockRejectedValue(

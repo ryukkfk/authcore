@@ -290,9 +290,9 @@ jobs:
             const result = JSON.parse(readFileSync("apps/api/s5-http-results.json", "utf8"));
             const tests = result.testResults.flatMap(file => file.assertionResults);
             assert.equal(result.success, true);
-            assert.equal(tests.length, 57);
+            assert.equal(tests.length, 59);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S5_S6_REAL_HTTP total=57 passed=57 skipped=0");
+            console.log("S5_S6_REAL_HTTP total=59 passed=59 skipped=0");
           '
 
       - name: Phase B remediation real PostgreSQL clock authority

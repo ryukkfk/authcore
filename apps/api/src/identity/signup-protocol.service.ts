@@ -5,6 +5,7 @@ import {
   PasswordCredentialRepository,
   SecurityAuditEventRepository,
   UserRepository,
+  VerificationEventRepository,
   SignupIdempotencyResultRepository as Results,
   SignupIdempotencyConflictError,
   SignupCapacityUnavailable,
@@ -274,6 +275,8 @@ export class IdempotentSignupService {
                 userId: created.id,
                 passwordHash,
               });
+              assertLive();
+              await new VerificationEventRepository(tx).requestInitial(created.id);
               assertLive();
               await new SecurityAuditEventRepository(tx).recordUserCreated({ userId: created.id });
             }

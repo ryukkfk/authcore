@@ -5,6 +5,7 @@ export {
 } from './password-credentials.js';
 
 export { users, type NewUser, type User } from './users.js';
+export { verificationEvents, type VerificationEvent } from './verification-events.js';
 export { securityAuditEvents, type SecurityAuditEvent } from './security-audit-events.js';
 export {
   signupIdempotencyClaims,

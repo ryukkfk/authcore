@@ -36,6 +36,13 @@
       "when": 1791888128826,
       "tag": "0004_signup_namespace_and_terminal_events",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792147245814,
+      "tag": "0005_verification_events",
+      "breakpoints": true
     }
   ]
 }

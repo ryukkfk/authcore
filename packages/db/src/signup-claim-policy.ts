@@ -66,7 +66,8 @@ export async function assertSignupDomainPrivileges(tx: SignupTransaction): Promi
       "SELECT bool_and(pg_catalog.has_table_privilege(current_user, relation, 'SELECT') AND " +
         "pg_catalog.has_table_privilege(current_user, relation, 'INSERT')) AS permitted " +
         "FROM (VALUES ('public.users'), ('public.password_credentials'), " +
-        "('public.security_audit_events'), ('public.signup_idempotency_results')) AS required(relation)",
+        "('public.security_audit_events'), ('public.signup_idempotency_results'), " +
+        "('public.verification_events')) AS required(relation)",
     )
   ).rows[0]?.permitted;
   if (permitted !== true) throw new SignupProtocolError('SIGNUP_REQUIRED_PRIVILEGE_UNAVAILABLE');

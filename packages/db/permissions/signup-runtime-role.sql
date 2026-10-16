@@ -41,7 +41,7 @@ BEGIN
 
   FOREACH relation_name IN ARRAY ARRAY['users', 'password_credentials', 'security_audit_events',
       'signup_idempotency_claims', 'signup_idempotency_results',
-      'signup_idempotency_namespace', 'signup_idempotency_terminal_events'] LOOP
+      'signup_idempotency_namespace', 'signup_idempotency_terminal_events', 'verification_events'] LOOP
     relation_oid := pg_catalog.to_regclass(pg_catalog.format('public.%I', relation_name));
     IF relation_oid IS NULL OR NOT EXISTS (
       SELECT 1 FROM pg_catalog.pg_class WHERE oid = relation_oid AND relkind = 'r'
@@ -100,7 +100,7 @@ BEGIN
       AND c.oid NOT IN ('public.users'::regclass, 'public.password_credentials'::regclass,
                        'public.security_audit_events'::regclass,
                        'public.signup_idempotency_claims'::regclass, 'public.signup_idempotency_results'::regclass,
-                       'public.signup_idempotency_namespace'::regclass, 'public.signup_idempotency_terminal_events'::regclass)
+                       'public.signup_idempotency_namespace'::regclass, 'public.signup_idempotency_terminal_events'::regclass, 'public.verification_events'::regclass)
       AND ((c.relkind IN ('r','p','v','m','f') AND (
         pg_catalog.has_table_privilege(runtime_name, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
         OR pg_catalog.has_any_column_privilege(runtime_name, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')))
@@ -115,7 +115,7 @@ BEGIN
     WHERE c.oid NOT IN ('public.users'::regclass, 'public.password_credentials'::regclass,
                        'public.security_audit_events'::regclass,
                        'public.signup_idempotency_claims'::regclass, 'public.signup_idempotency_results'::regclass,
-                       'public.signup_idempotency_namespace'::regclass, 'public.signup_idempotency_terminal_events'::regclass)
+                       'public.signup_idempotency_namespace'::regclass, 'public.signup_idempotency_terminal_events'::regclass, 'public.verification_events'::regclass)
       AND (EXISTS (SELECT 1 FROM pg_catalog.aclexplode(c.relacl) acl WHERE acl.grantee = runtime_role.oid)
         OR EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a,
           LATERAL pg_catalog.aclexplode(a.attacl) acl
