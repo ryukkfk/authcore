@@ -15,6 +15,7 @@ on:
       - fix/phase-b-audit-pb001-pb002
       - feat/authcore-full-product
       - feat/authcore-verification-worker
+      - feat/authcore-verification-http
   pull_request:
     types: [opened, synchronize, reopened, edited, ready_for_review]
     branches:
@@ -30,6 +31,7 @@ on:
       - fix/phase-b-audit-pb001-pb002
       - feat/authcore-full-product
       - feat/authcore-verification-outbox
+      - feat/authcore-verification-worker
 permissions:
   contents: read
   pull-requests: read
