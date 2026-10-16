@@ -1,0 +1,13 @@
+.git
+**/node_modules
+**/dist
+**/.next
+.env
+.env.*
+!.env.example
+.local-demo
+**/*.log
+**/*results.json
+**/coverage
+**/.obsidian
+tmp
