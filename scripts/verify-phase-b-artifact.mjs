@@ -32,7 +32,7 @@ assert.deepEqual(Object.getOwnPropertyNames(IdentityService.prototype).sort(), [
 ]);
 assert.deepEqual(Reflect.getMetadata('exports', DatabaseModule), [DatabaseService]);
 assert.deepEqual(Reflect.getMetadata('providers', DatabaseModule), [DatabaseService]);
-for (const area of ['apps/api', 'packages/db', 'packages/crypto']) {
+for (const area of ['apps/api', 'apps/worker', 'packages/db', 'packages/crypto']) {
   for (const path of await files(resolve(root, area, 'dist'))) {
     if (!path.endsWith('.js')) continue;
     const name = relative(root, path).replaceAll('\\', '/');

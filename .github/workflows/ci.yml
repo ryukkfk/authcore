@@ -14,6 +14,7 @@ on:
       - feat/signup-s6-security-hardening
       - fix/phase-b-audit-pb001-pb002
       - feat/authcore-full-product
+      - feat/authcore-verification-worker
   pull_request:
     types: [opened, synchronize, reopened, edited, ready_for_review]
     branches:
@@ -28,6 +29,7 @@ on:
       - feat/signup-s6-security-hardening
       - fix/phase-b-audit-pb001-pb002
       - feat/authcore-full-product
+      - feat/authcore-verification-outbox
 permissions:
   contents: read
   pull-requests: read
@@ -62,7 +64,13 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+      mailpit:
+        image: axllent/mailpit:v1.31.6
+        ports:
+          - 127.0.0.1:8025:8025
+
     env:
+      TEST_MAILBOX_URL: http://127.0.0.1:8025
       TEST_DATABASE_URL: postgresql://authcore_test:authcore_test@localhost:5432/authcore_test
       TEST_REDIS_URL: redis://127.0.0.1:6380
 

@@ -1,4 +1,9 @@
 export { createDatabaseClient, type DatabaseClient, type DatabaseClientOptions } from './client.js';
+export {
+  EmailDeliveryRepository,
+  type ClaimedEmailDelivery,
+} from './repositories/email-delivery.repository.js';
+export { EmailVerificationRepository } from './repositories/email-verification.repository.js';
 export { checkDatabaseConnection } from './health.js';
 export { VerificationEventRepository } from './repositories/verification-event.repository.js';
 export { verificationEvents, type VerificationEvent } from './schema/verification-events.js';

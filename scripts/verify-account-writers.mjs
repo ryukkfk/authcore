@@ -19,7 +19,9 @@ async function files(folder) {
 // Review changes to this inventory as security changes. Repositories remain
 // trusted transaction primitives; this guard is not an arbitrary-code sandbox.
 const expected = {
+  updates: ['packages/db/src/repositories/email-verification.repository.ts:users'],
   inserts: [
+    'packages/db/src/repositories/email-verification.repository.ts:accountSecurityEvents',
     'packages/db/src/repositories/password-credential.repository.ts:passwordCredentials',
     'packages/db/src/repositories/security-audit-event.repository.ts:securityAuditEvents',
     'packages/db/src/repositories/signup-idempotency.repository.ts:claims',
@@ -36,6 +38,7 @@ const expected = {
     'apps/api/src/identity/signup-protocol.service.ts:VerificationEventRepository',
   ],
   databaseEntrypoints: [
+    'apps/worker/src/index.ts:createDatabaseClient',
     'apps/api/src/database/database.service.ts:createDatabaseClient',
     'apps/api/src/identity/signup-protocol.service.ts:runOwnedSignupTransaction',
     'apps/api/src/identity/signup-reservation.ts:runOwnedSignupTransaction',
@@ -48,6 +51,7 @@ const expected = {
   ],
 };
 const actual = {
+  updates: [],
   inserts: [],
   accountRepositories: [],
   databaseConsumers: [],
@@ -104,6 +108,20 @@ for (const area of ['apps', 'packages', 'scripts']) {
         node.expression.name.text === 'insert'
       ) {
         actual.inserts.push(name + ':' + node.arguments[0]?.getText(source));
+      }
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'update'
+      ) {
+        const target = node.arguments[0]?.getText(source);
+        // Count persistence updates; hash/cipher streaming update() is not SQL.
+        if (
+          target === 'users' ||
+          target === 'passwordCredentials' ||
+          target === 'securityAuditEvents'
+        )
+          actual.updates.push(name + ':' + target);
       }
       if (ts.isStringLiteralLike(node)) {
         assert(

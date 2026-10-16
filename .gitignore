@@ -1,4 +1,5 @@
 node_modules/
+.local-demo/
 dist/
 build/
 .next/
