@@ -133,7 +133,9 @@ and private paths are excluded. The summary deduplicates focused executions and
 still fails missing reports, failures and uncovered skips. Five Node regression
 tests cover duplicate reconciliation, missing evidence, failed duplicates,
 uncovered identities and unsafe suite paths. These five evidence-tool tests are
-reported separately from the Vitest distinct count.
+reported separately from the Vitest distinct count. Runtime privilege ownership
+cases use stable kind labels instead of randomized disposable database names,
+while preserving their real SQL and all privilege assertions.
 
 ## Review and release boundary
 
