@@ -31,6 +31,7 @@ const expected = {
     'packages/db/src/signup-claim-policy.ts:terminal',
   ],
   accountRepositories: [
+    'apps/api/src/identity/email-verification.service.ts:EmailVerificationRepository',
     'apps/api/src/identity/identity.module.ts:UserRepository',
     'apps/api/src/identity/signup-protocol.service.ts:PasswordCredentialRepository',
     'apps/api/src/identity/signup-protocol.service.ts:SecurityAuditEventRepository',
@@ -38,6 +39,7 @@ const expected = {
     'apps/api/src/identity/signup-protocol.service.ts:VerificationEventRepository',
   ],
   databaseEntrypoints: [
+    'apps/api/src/identity/email-verification.service.ts:createDatabaseClient',
     'apps/worker/src/index.ts:createDatabaseClient',
     'apps/api/src/database/database.service.ts:createDatabaseClient',
     'apps/api/src/identity/signup-protocol.service.ts:runOwnedSignupTransaction',
@@ -91,7 +93,7 @@ for (const area of ['apps', 'packages', 'scripts']) {
             }
             if (
               name.startsWith('apps/') &&
-              /^(?:UserRepository|PasswordCredentialRepository|SecurityAuditEventRepository|VerificationEventRepository)$/.test(
+              /^(?:UserRepository|PasswordCredentialRepository|SecurityAuditEventRepository|VerificationEventRepository|EmailVerificationRepository)$/.test(
                 symbol,
               )
             ) {
