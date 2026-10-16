@@ -144,3 +144,28 @@ OPS-13, external writer rollout and AUTH-001 gates remain separate. Preserve
 HMAC v1, immutable ledger/terminal history, driver patch, T1/T2/T3, Redis admission,
 exact 202, and default-disabled policy. No merge, deployment or activation occurs
 as part of this remediation.
+
+## Initial hosted remediation evidence
+
+Implementation head `ee71e0e76ff571406d9a2284ccc1a86df77d2268` passed
+[push CI38841804377](https://github.com/ryukkfk/authcore/actions/runs/38841804377)
+and [opened PR CI38841844828](https://github.com/ryukkfk/authcore/actions/runs/38841844828).
+The PR tested merge `fa0ec6e88b97a07789b2dbea580b4b1b55fce118`
+into S6 `0d7120b99208621e99a50e1f4ef0c7b89ddd8436`.
+Results:683 distinct Vitest passes,0 failures/0 uncovered skips,88 guarded
+executions reconciled,10/10 new real PostgreSQL regressions,57/57 real HTTP,
+28/28 Redis and5/5 separate evidence-tool regressions. All inherited dedicated
+A1/S1/S2/S3/S4/S6 and migration/permission/artifact checks passed.
+
+The sanitized artifact was independently downloaded and its SHA-256 matched
+GitHub's published digest. All683 identities reconstructed every report's
+PASS/SKIP/FAIL contributions without inflating focused reruns. Protected original
+worktrees and historical audit evidence were unchanged.
+
+This evidence describes the implementation head above. This documentation update
+also exercises a real PR `synchronize` event; require successful exact updated-head
+push and merged-candidate runs in PR #21 Checks before approving that revision.
+PR editing is separately exercised without retargeting any historical PR. The
+final reviewer must still compare live head/base/merge parents and verify governance.
+Neither these successful checks nor the documentation constitute independent
+human review, repository protection or production readiness.
