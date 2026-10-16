@@ -449,7 +449,7 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
     }
   });
 
-  it.each(['password_credentials', 'security_audit_events'])(
+  it.each(['password_credentials', 'security_audit_events', 'verification_events'])(
     'sanitizes a real PostgreSQL %s constraint failure, rolls back, and recovers HTTP admission',
     async (table) => {
       const errorLog = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
@@ -470,6 +470,9 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
           (await database.pool.query('SELECT * FROM security_audit_events')).rows,
         ).toHaveLength(0);
         expect((await database.pool.query('SELECT * FROM password_credentials')).rows).toHaveLength(
+          0,
+        );
+        expect((await database.pool.query('SELECT * FROM verification_events')).rows).toHaveLength(
           0,
         );
         expect(errorLog).toHaveBeenCalledExactlyOnceWith({
@@ -494,7 +497,9 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
     expect(await first.json()).toEqual({ status: 'accepted' });
     const credentials = (await database.pool.query('SELECT * FROM password_credentials')).rows;
     const events = (await database.pool.query('SELECT * FROM security_audit_events')).rows;
+    const verification = (await database.pool.query('SELECT * FROM verification_events')).rows;
     expect(events).toHaveLength(1);
+    expect(verification).toHaveLength(1);
     const duplicate = await fetch(`${baseUrl}/api/v1/auth/signup`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'idempotency-key': 'e2e_' + randomUUID() },
@@ -507,6 +512,9 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
       credentials,
     );
     expect((await database.pool.query('SELECT * FROM security_audit_events')).rows).toEqual(events);
+    expect((await database.pool.query('SELECT * FROM verification_events')).rows).toEqual(
+      verification,
+    );
   });
 
   it('commits signup through the restricted login while audit mutation is denied', async () => {
@@ -560,6 +568,31 @@ describe('Isolated HTTP + Redis + PostgreSQL signup security', () => {
     expect((await send()).status).toBe(202);
     for (const table of ['users', 'password_credentials', 'security_audit_events']) {
       expect((await database.pool.query(`SELECT * FROM ${table}`)).rows).toHaveLength(1);
+    }
+  });
+  it('denied verification intent privileges fail identically before fresh or duplicate account handling', async () => {
+    expect((await send()).status).toBe(202);
+    const before = (await database.pool.query('SELECT * FROM verification_events')).rows;
+    const acceptedBefore = (await database.pool.query('SELECT * FROM signup_idempotency_results'))
+      .rows;
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    await database.pool.query(`REVOKE INSERT ON verification_events FROM "${runtimeRole}"`);
+    try {
+      for (const email of [input.email, 'fresh-outbox@example.invalid']) {
+        const response = await send(email);
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual({
+          error: { code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
+        });
+      }
+      await expect.poll(async () => redis.zCard(admissionKey())).toBe(0);
+      expect((await database.pool.query('SELECT * FROM verification_events')).rows).toEqual(before);
+      expect((await database.pool.query('SELECT * FROM signup_idempotency_results')).rows).toEqual(
+        acceptedBefore,
+      );
+      expect((await database.pool.query('SELECT id FROM users')).rows).toHaveLength(1);
+    } finally {
+      await provisionRuntime();
     }
   });
 });

@@ -25,6 +25,7 @@ const expected = {
     'packages/db/src/repositories/signup-idempotency.repository.ts:claims',
     'packages/db/src/repositories/signup-idempotency.repository.ts:results',
     'packages/db/src/repositories/user.repository.ts:users',
+    'packages/db/src/repositories/verification-event.repository.ts:verificationEvents',
     'packages/db/src/signup-claim-policy.ts:terminal',
   ],
   accountRepositories: [
@@ -32,6 +33,7 @@ const expected = {
     'apps/api/src/identity/signup-protocol.service.ts:PasswordCredentialRepository',
     'apps/api/src/identity/signup-protocol.service.ts:SecurityAuditEventRepository',
     'apps/api/src/identity/signup-protocol.service.ts:UserRepository',
+    'apps/api/src/identity/signup-protocol.service.ts:VerificationEventRepository',
   ],
   databaseEntrypoints: [
     'apps/api/src/database/database.service.ts:createDatabaseClient',
@@ -85,7 +87,7 @@ for (const area of ['apps', 'packages', 'scripts']) {
             }
             if (
               name.startsWith('apps/') &&
-              /^(?:UserRepository|PasswordCredentialRepository|SecurityAuditEventRepository)$/.test(
+              /^(?:UserRepository|PasswordCredentialRepository|SecurityAuditEventRepository|VerificationEventRepository)$/.test(
                 symbol,
               )
             ) {

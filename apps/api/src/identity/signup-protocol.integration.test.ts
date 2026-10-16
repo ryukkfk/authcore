@@ -78,6 +78,14 @@ describe.skipIf(!approved)('S4 real restricted PostgreSQL, Redis and Argon2 prot
     return response;
   }
   const counts = () => f.writes();
+  async function verificationIntent(email: string) {
+    return (
+      await f.owner.pool.query(
+        'SELECT e.id,e.user_id,e.reason FROM verification_events e JOIN users u ON u.id=e.user_id WHERE u.email_normalized=$1',
+        [email.toLowerCase()],
+      )
+    ).rows;
+  }
   async function retained(key: string, input: unknown, boundary: Ready['boundary']) {
     const binding = await boundary.bind(key, input);
     return (
@@ -113,6 +121,7 @@ describe.skipIf(!approved)('S4 real restricted PostgreSQL, Redis and Argon2 prot
     expect(await verifyPassword(encoded!, r.input.password)).toBe(true);
     expect(encoded?.startsWith('$argon2id$v=19$m=65536,p=1,t=3$')).toBe(true);
     expect(started.operation.proof?.source).toBe('T2_COMMIT_ACK');
+    expect(await verificationIntent(r.input.email)).toHaveLength(1);
     console.info(
       JSON.stringify({
         scenario: 'S4_ATOMIC_ACCEPTED',
@@ -256,6 +265,11 @@ describe.skipIf(!approved)('S4 real restricted PostgreSQL, Redis and Argon2 prot
     await proxy.waitForDrop();
     expect((await complete(started)).status).toBe(202);
     expect(started.operation.proof?.source).toBe('RETAINED_RESULT_T3');
+    const intent = await verificationIntent(r.input.email);
+    expect(intent).toHaveLength(1);
+    expect(intent[0].reason).toBe('signup');
+    expect((await complete(service.start(r.key, r.input))).status).toBe(202);
+    expect(await verificationIntent(r.input.email)).toEqual(intent);
     expect(started.operation.evidence().map((record) => record.outcome)).toEqual([
       'COMMIT_ACK',
       'COMMIT_UNKNOWN',

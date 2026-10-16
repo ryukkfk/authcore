@@ -52,7 +52,7 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     connectionTimeoutMillis: 5_000,
   });
   const tables =
-    'public.users, public.password_credentials, public.security_audit_events, public.signup_idempotency_claims, public.signup_idempotency_results, public.signup_idempotency_namespace, public.signup_idempotency_terminal_events';
+    'public.users, public.password_credentials, public.security_audit_events, public.signup_idempotency_claims, public.signup_idempotency_results, public.signup_idempotency_namespace, public.signup_idempotency_terminal_events, public.verification_events';
   const runtimeDb = drizzle(runtime);
   const claims = new SignupIdempotencyClaimRepository(runtimeDb);
   const results = new SignupIdempotencyResultRepository(runtimeDb);
@@ -244,7 +244,7 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     ).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('inventories all seven effective relation/column privileges without grant options', async () => {
+  it('inventories all eight effective relation/column privileges without grant options', async () => {
     await provision();
     const inventory = (
       await owner.query(
@@ -252,7 +252,7 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
         [roleName],
       )
     ).rows;
-    expect(new Set(inventory.map((row) => row.relname)).size).toBe(7);
+    expect(new Set(inventory.map((row) => row.relname)).size).toBe(8);
     for (const row of inventory)
       expect(row).toMatchObject({
         readable: true,
@@ -263,13 +263,33 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     console.info(
       JSON.stringify({
         scope: 'S2_RUNTIME_INVENTORY',
-        tables: 7,
+        tables: 8,
         columns: inventory.length,
         namespaceWrite: false,
         mutationGrant: 'claims.lock_anchor only',
         grantOptions: false,
       }),
     );
+  });
+  it('allows durable notification intent but denies its mutation and deletion', async () => {
+    await provision();
+    const event = (
+      await runtime.query(
+        'INSERT INTO public.verification_events(user_id) VALUES($1) RETURNING id',
+        [userId],
+      )
+    ).rows[0];
+    for (const statement of [
+      "UPDATE public.verification_events SET reason='resend' WHERE id=$1",
+      'DELETE FROM public.verification_events WHERE id=$1',
+    ])
+      await expect(runtime.query(statement, [event.id])).rejects.toMatchObject({ code: '42501' });
+    await expect(runtime.query('TRUNCATE public.verification_events')).rejects.toMatchObject({
+      code: '42501',
+    });
+    expect(
+      (await owner.query('SELECT id FROM public.verification_events WHERE id=$1', [event.id])).rows,
+    ).toHaveLength(1);
   });
 
   it.each([

@@ -1,5 +1,7 @@
 export { createDatabaseClient, type DatabaseClient, type DatabaseClientOptions } from './client.js';
 export { checkDatabaseConnection } from './health.js';
+export { VerificationEventRepository } from './repositories/verification-event.repository.js';
+export { verificationEvents, type VerificationEvent } from './schema/verification-events.js';
 export {
   DuplicateUserEmailError,
   UserRepository,
