@@ -13,6 +13,7 @@ on:
       - feat/signup-s5-http-idempotency
       - feat/signup-s6-security-hardening
       - fix/phase-b-audit-pb001-pb002
+      - feat/authcore-full-product
   pull_request:
     types: [opened, synchronize, reopened, edited, ready_for_review]
     branches:
@@ -25,6 +26,8 @@ on:
       - feat/signup-s4-recovery-orchestration
       - feat/signup-s5-http-idempotency
       - feat/signup-s6-security-hardening
+      - fix/phase-b-audit-pb001-pb002
+      - feat/authcore-full-product
 permissions:
   contents: read
   pull-requests: read

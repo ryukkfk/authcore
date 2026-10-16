@@ -1,0 +1,6 @@
+FROM node:24-bookworm-slim
+RUN npm install --global pnpm@12.8.1
+WORKDIR /workspace
+COPY . .
+RUN pnpm install --frozen-lockfile && pnpm build
+CMD ["node", "scripts/test-local-container.mjs"]

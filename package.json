@@ -12,7 +12,8 @@
     "format:check": "prettier . --check",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "test:ci": "pnpm lint && pnpm typecheck && pnpm test"
+    "test:ci": "pnpm lint && pnpm typecheck && pnpm test",
+    "test:local": "docker compose -p authcore-full-product-test -f infrastructure/compose.test.yml run --build --rm runner"
   },
   "engines": {
     "node": ">=24"
