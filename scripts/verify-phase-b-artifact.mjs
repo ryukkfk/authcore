@@ -23,6 +23,15 @@ assert.equal(
   false,
 );
 let inspected = 0;
+const { IdentityService } = await import('../apps/api/dist/identity/identity.service.js');
+const { DatabaseModule } = await import('../apps/api/dist/database/database.module.js');
+const { DatabaseService } = await import('../apps/api/dist/database/database.service.js');
+assert.deepEqual(Object.getOwnPropertyNames(IdentityService.prototype).sort(), [
+  'constructor',
+  'findUserByEmail',
+]);
+assert.deepEqual(Reflect.getMetadata('exports', DatabaseModule), [DatabaseService]);
+assert.deepEqual(Reflect.getMetadata('providers', DatabaseModule), [DatabaseService]);
 for (const area of ['apps/api', 'packages/db', 'packages/crypto']) {
   for (const path of await files(resolve(root, area, 'dist'))) {
     if (!path.endsWith('.js')) continue;

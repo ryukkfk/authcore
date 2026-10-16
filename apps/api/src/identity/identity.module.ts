@@ -1,6 +1,8 @@
 import { Module, type DynamicModule } from '@nestjs/common';
+import { UserRepository } from '@authcore/db';
 
 import { DatabaseModule } from '../database/database.module.js';
+import { DatabaseService } from '../database/database.service.js';
 import { RedisModule } from '../redis/redis.module.js';
 import { AuthController } from './auth.controller.js';
 import { IdentityService } from './identity.service.js';
@@ -20,7 +22,19 @@ import { SignupAdmissionInterceptor } from './signup-admission.interceptor.js';
   imports: [DatabaseModule, RedisModule],
   controllers: [AuthController],
   providers: [
-    IdentityService,
+    {
+      provide: IdentityService,
+      inject: [DatabaseService],
+      useFactory: (database: DatabaseService) => {
+        const repository = new UserRepository(database.getClient().db);
+        // Export only the read capability, never the pool-bound writer object.
+        return new IdentityService(
+          Object.freeze({
+            findByNormalizedEmail: (email: string) => repository.findByNormalizedEmail(email),
+          }),
+        );
+      },
+    },
     SignupService,
     SignupAdmission,
     SignupAdmissionInterceptor,

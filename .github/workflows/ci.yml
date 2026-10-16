@@ -12,7 +12,9 @@ on:
       - feat/signup-s4-recovery-orchestration
       - feat/signup-s5-http-idempotency
       - feat/signup-s6-security-hardening
+      - fix/phase-b-audit-pb001-pb002
   pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
     branches:
       - main
       - test/signup-s0-commit-outcomes
@@ -22,8 +24,10 @@ on:
       - feat/signup-s3-postgres-capacity
       - feat/signup-s4-recovery-orchestration
       - feat/signup-s5-http-idempotency
+      - feat/signup-s6-security-hardening
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   verify:
@@ -62,6 +66,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify effective CI candidate before testing
+        env:
+          CI_READ_TOKEN: ${{ github.token }}
+        run: node scripts/verify-ci-candidate.mjs
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -96,7 +108,10 @@ jobs:
         run: pnpm typecheck
 
       - name: S6 production artifact and default security boundary
-        run: node scripts/verify-phase-b-artifact.mjs
+        run: |
+          node scripts/verify-phase-b-artifact.mjs
+          node scripts/verify-account-writers.mjs
+          node --test scripts/summarize-phase-b-ci.test.mjs
 
       - name: S6 disposable PostgreSQL log privacy
         run: node scripts/configure-disposable-ci-postgres.mjs
@@ -277,15 +292,45 @@ jobs:
             console.log("S5_S6_REAL_HTTP total=57 passed=57 skipped=0");
           '
 
+      - name: Phase B remediation real PostgreSQL clock authority
+        env:
+          PB_POSTGRES_APPROVED: 'true'
+          SIGNUP_ENABLED: 'false'
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -n "$TEST_DATABASE_URL"
+          test -n "$TEST_REDIS_URL"
+          test -z "${DATABASE_URL:-}"
+          pnpm --filter @authcore/api test src/identity/phase-b-remediation.integration.test.ts --reporter=verbose --reporter=json --outputFile.json=pb-results.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const result = JSON.parse(readFileSync("apps/api/pb-results.json", "utf8"));
+            const tests = result.testResults.flatMap(file => file.assertionResults);
+            assert.equal(result.success, true);
+            assert.equal(tests.length, 10);
+            assert(tests.every(test => test.status === "passed"));
+            console.log("PB_REAL_POSTGRES total=10 passed=10 skipped=0");
+          '
+
+      - name: Recheck effective CI candidate after testing
+        env:
+          CI_READ_TOKEN: ${{ github.token }}
+        run: node scripts/verify-ci-candidate.mjs
+
       - name: S6 unique coverage and guarded-test reconciliation
         if: always()
         run: node scripts/summarize-phase-b-ci.mjs
 
-      - name: Preserve sanitized validation counts
+      - name: Preserve sanitized validation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: phase-b-validation-${{ github.run_id }}
-          path: phase-b-validation-summary.json
+          path: |
+            phase-b-validation-summary.json
+            phase-b-test-identities.json
+            phase-b-merge-candidate.json
           if-no-files-found: warn
           retention-days: 30

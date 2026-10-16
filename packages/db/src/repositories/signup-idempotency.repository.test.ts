@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   SignupIdempotencyClaimRepository,
@@ -44,6 +44,14 @@ function setup() {
 }
 
 describe('signup idempotency repository boundaries', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('PB-002 lets PostgreSQL decide a finite expiry even when the application clock is ahead', async () => {
+    const { claims, insert, limit } = setup();
+    limit.mockReset().mockResolvedValue([]);
+    vi.spyOn(Date, 'now').mockReturnValue(expiresAt.getTime() + 120_000);
+    expect(await claims.reserve(binding, expiresAt)).toEqual({ claim, reserved: true });
+    expect(insert).toHaveBeenCalledOnce();
+  });
   it('returns a retained expired claim before attempting an invalid INSERT', async () => {
     const { claims, limit, returning, insert } = setup();
     const expired = {
@@ -69,7 +77,7 @@ describe('signup idempotency repository boundaries', () => {
     expect(insert).not.toHaveBeenCalled();
   });
 
-  it.each([new Date(0), new Date(NaN)])(
+  it.each([new Date(NaN), 'not a timestamp' as unknown as Date])(
     'rejects invalid expiry for a new claim without INSERT: %s',
     async (invalid) => {
       const { claims, limit, insert } = setup();
@@ -88,7 +96,7 @@ describe('signup idempotency repository boundaries', () => {
       const { claims, insert } = setup();
       const pending = claims.reserve(
         { ...binding, ...(conflict ? { payloadDigest: 'c'.repeat(64) } : {}) },
-        new Date(0),
+        new Date(NaN),
       );
       if (conflict) await expect(pending).rejects.toBeInstanceOf(SignupIdempotencyConflictError);
       else expect(await pending).toEqual({ claim, reserved: false });
@@ -120,6 +128,32 @@ describe('signup idempotency repository boundaries', () => {
         code: '23514',
         constraint: 'signup_idempotency_claims_digests_check',
       },
+    });
+    returning.mockRejectedValue(failure);
+    await expect(claims.reserve(binding, expiresAt)).rejects.toBe(failure);
+  });
+
+  it('submits finite past timestamps to the PostgreSQL constraint even with an earlier app clock', async () => {
+    const { claims, returning, insert, limit } = setup();
+    limit.mockReset().mockResolvedValue([]);
+    vi.spyOn(Date, 'now').mockReturnValue(-86400000);
+    returning.mockRejectedValue(
+      Object.assign(new Error('private SQL detail'), {
+        code: '23514',
+        constraint: 'signup_idempotency_claims_expiry_check',
+      }),
+    );
+    await expect(claims.reserve(binding, new Date(0))).rejects.toBeInstanceOf(
+      SignupIdempotencyExpiryError,
+    );
+    expect(insert).toHaveBeenCalledOnce();
+  });
+
+  it('requires both SQLSTATE and the expiry constraint name for controlled mapping', async () => {
+    const { claims, returning } = setup();
+    const failure = Object.assign(new Error('unrelated SQL error'), {
+      code: '23505',
+      constraint: 'signup_idempotency_claims_expiry_check',
     });
     returning.mockRejectedValue(failure);
     await expect(claims.reserve(binding, expiresAt)).rejects.toBe(failure);

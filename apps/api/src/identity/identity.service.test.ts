@@ -1,12 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  DuplicateUserEmailError,
-  UserRepository,
-  type User,
-} from '@authcore/db';
+import type { User } from '@authcore/db';
 
-import { EmailAlreadyInUseError } from './identity.errors.js';
 import { IdentityService } from './identity.service.js';
 
 function createUser(): User {
@@ -26,8 +21,7 @@ function createUser(): User {
 function createService() {
   const userRepository = {
     findByNormalizedEmail: vi.fn(),
-    create: vi.fn(),
-  } as unknown as UserRepository;
+  };
 
   return {
     service: new IdentityService(userRepository),
@@ -40,44 +34,29 @@ describe('IdentityService', () => {
     const { service, userRepository } = createService();
     const user = createUser();
 
-    vi.mocked(
-      userRepository.findByNormalizedEmail,
-    ).mockResolvedValue(user);
+    vi.mocked(userRepository.findByNormalizedEmail).mockResolvedValue(user);
 
-    await expect(
-      service.findUserByEmail(' User@Example.COM '),
-    ).resolves.toBe(user);
+    await expect(service.findUserByEmail(' User@Example.COM ')).resolves.toBe(user);
 
-    expect(
-      userRepository.findByNormalizedEmail,
-    ).toHaveBeenCalledWith('user@example.com');
+    expect(userRepository.findByNormalizedEmail).toHaveBeenCalledWith('user@example.com');
   });
 
-  it('creates a user with normalized lookup email', async () => {
+  it('preserves a missing read result without writing a user', async () => {
     const { service, userRepository } = createService();
-    const user = createUser();
-
-    vi.mocked(userRepository.create).mockResolvedValue(user);
-
-    await expect(
-      service.createUser(' User@Example.COM '),
-    ).resolves.toBe(user);
-
-    expect(userRepository.create).toHaveBeenCalledWith({
-      email: 'User@Example.COM',
-      emailNormalized: 'user@example.com',
-    });
+    userRepository.findByNormalizedEmail.mockResolvedValue(null);
+    expect(await service.findUserByEmail('missing@example.com')).toBeNull();
+    expect(Object.getOwnPropertyNames(IdentityService.prototype).sort()).toEqual([
+      'constructor',
+      'findUserByEmail',
+    ]);
   });
 
-  it('translates duplicate database errors', async () => {
+  it('propagates lookup errors without trying an account creation fallback', async () => {
     const { service, userRepository } = createService();
 
-    vi.mocked(userRepository.create).mockRejectedValue(
-      new DuplicateUserEmailError(),
-    );
+    const failure = new Error('lookup unavailable');
+    userRepository.findByNormalizedEmail.mockRejectedValue(failure);
 
-    await expect(
-      service.createUser('user@example.com'),
-    ).rejects.toBeInstanceOf(EmailAlreadyInUseError);
+    await expect(service.findUserByEmail('user@example.com')).rejects.toBe(failure);
   });
 });
