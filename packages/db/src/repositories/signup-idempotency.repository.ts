@@ -74,7 +74,7 @@ export class SignupIdempotencyClaimRepository {
       return { claim: retained, reserved: false };
     }
     const expiryTime = expiresAt instanceof Date ? expiresAt.getTime() : NaN;
-    if (!Number.isFinite(expiryTime) || expiryTime <= Date.now()) {
+    if (!Number.isFinite(expiryTime)) {
       // A concurrent reservation may have committed after the first lookup.
       // An uncommitted claim remains invisible: fail closed, never invent a TTL.
       const concurrent = await this.findByKey(binding);
@@ -101,8 +101,10 @@ export class SignupIdempotencyClaimRepository {
         })
         .returning();
     } catch (error) {
-      // The database is authoritative if expiry passes locally but elapses before
-      // INSERT, or clocks differ. Do not relabel other constraints/infrastructure
+      // PostgreSQL's existing CHECK compares expiry with its own default created_at
+      // (transaction time, at column precision). No application-clock veto or extra
+      // clock query: finite inputs are decided atomically by that constraint.
+      // Do not relabel other constraints/infrastructure
       // failures. A caller-owned failed PostgreSQL transaction still needs rollback.
       const failure = error instanceof Error && 'cause' in error ? error.cause : error;
       if (

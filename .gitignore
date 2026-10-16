@@ -21,6 +21,10 @@ coverage/
 **/s4-results.json
 **/s6-lifecycle-results.json
 **/s5-http-results.json
+**/pb-results.json
+**/remediation-local-results.json
+/phase-b-test-identities.json
+/phase-b-merge-candidate.json
 /phase-b-validation-summary.json
 
 *.log

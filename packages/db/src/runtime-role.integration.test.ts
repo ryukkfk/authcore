@@ -388,17 +388,18 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     }
   });
 
-  it.each(['SCHEMA public', 'TABLE public.security_audit_events', `DATABASE "${databaseName}"`])(
-    'rejects ownership of %s by the runtime principal',
-    async (object) => {
-      await owner.query(`ALTER ${object} OWNER TO "${roleName}"`);
-      try {
-        await expect(provision()).rejects.toThrow('Runtime role must not own database objects');
-      } finally {
-        await owner.query(`ALTER ${object} OWNER TO "${ownerName.replaceAll('"', '""')}"`);
-      }
-    },
-  );
+  it.each([
+    { kind: 'schema', object: 'SCHEMA public' },
+    { kind: 'audit table', object: 'TABLE public.security_audit_events' },
+    { kind: 'database', object: `DATABASE "${databaseName}"` },
+  ])('rejects ownership of $kind by the runtime principal', async ({ object }) => {
+    await owner.query(`ALTER ${object} OWNER TO "${roleName}"`);
+    try {
+      await expect(provision()).rejects.toThrow('Runtime role must not own database objects');
+    } finally {
+      await owner.query(`ALTER ${object} OWNER TO "${ownerName.replaceAll('"', '""')}"`);
+    }
+  });
 
   it('rejects PUBLIC temporary-object privileges without changing PUBLIC grants', async () => {
     await owner.query(`GRANT TEMPORARY ON DATABASE "${databaseName}" TO PUBLIC`);
