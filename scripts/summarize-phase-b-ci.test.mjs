@@ -12,6 +12,7 @@ const reports = [
   'packages/crypto/workspace-results.json',
   'packages/db/workspace-results.json',
   'apps/api/workspace-results.json',
+  'apps/worker/workspace-results.json',
   'packages/db/postgres-results.json',
   'packages/db/a1-results.json',
   'packages/db/s1-pool-results.json',

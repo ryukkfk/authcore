@@ -1,0 +1,6 @@
+\set ON_ERROR_STOP on
+BEGIN;
+SELECT set_config('authcore.email_role', :'email_role', true);
+SELECT set_config('authcore.email_capability', :'email_capability', true);
+\ir email-runtime-role.sql
+COMMIT;

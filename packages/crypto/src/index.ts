@@ -1,5 +1,13 @@
 export { hashPassword, verifyPassword } from './password.js';
 export {
+  createVerificationToken,
+  verificationTokenDigest,
+  sealDeliveryPayload,
+  openDeliveryPayload,
+  type DeliveryEncryptionKey,
+  type DeliveryEnvelope,
+} from './verification.js';
+export {
   createSignupIdempotencyHasher,
   type SignupIdempotencyBinding,
 } from './signup-idempotency.js';

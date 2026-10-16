@@ -246,7 +246,18 @@ importers:
 
   apps/web: {}
 
-  apps/worker: {}
+  apps/worker:
+    dependencies:
+      '@authcore/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@authcore/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.1
+        version: 24.19.1
 
   packages/config:
     dependencies:
@@ -271,6 +282,9 @@ importers:
       '@authcore/config':
         specifier: workspace:*
         version: link:../config
+      '@authcore/crypto':
+        specifier: workspace:*
+        version: link:../crypto
       drizzle-orm:
         specifier: ^0.45.3
         version: 0.45.3(@types/pg@8.23.1)(pg@8.23.1(patch_hash=bb743ce55136cf1fc9c158a514272692cf0155c7e417ce33d9e56e5e452df16b))

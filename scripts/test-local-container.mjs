@@ -8,6 +8,7 @@ const env = {
   ...process.env,
   TEST_DATABASE_URL: 'postgresql://authcore_test:authcore_test@127.0.0.1:5432/authcore_test',
   TEST_REDIS_URL: 'redis://127.0.0.1:6380',
+  TEST_MAILBOX_URL: 'http://127.0.0.1:8025',
   SIGNUP_ENABLED: 'false',
 };
 delete env.DATABASE_URL;

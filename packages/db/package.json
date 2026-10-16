@@ -17,6 +17,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
+    "@authcore/crypto": "workspace:*",
     "@authcore/config": "workspace:*",
     "drizzle-orm": "^0.45.3",
     "pg": "8.23.1"

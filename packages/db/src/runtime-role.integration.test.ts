@@ -244,7 +244,7 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     ).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('inventories all eight effective relation/column privileges without grant options', async () => {
+  it('inventories all eight signup relations and denies access to four email subsystem relations', async () => {
     await provision();
     const inventory = (
       await owner.query(
@@ -252,18 +252,27 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
         [roleName],
       )
     ).rows;
-    expect(new Set(inventory.map((row) => row.relname)).size).toBe(8);
-    for (const row of inventory)
+    expect(new Set(inventory.map((row) => row.relname)).size).toBe(12);
+    const emailTables = [
+      'email_deliveries',
+      'email_verification_tokens',
+      'email_delivery_attempts',
+      'account_security_events',
+    ];
+    for (const row of inventory) {
+      const signup = !emailTables.includes(row.relname);
       expect(row).toMatchObject({
-        readable: true,
-        insertable: row.relname !== 'signup_idempotency_namespace',
+        readable: signup,
+        insertable: signup && row.relname !== 'signup_idempotency_namespace',
         updatable: row.relname === 'signup_idempotency_claims' && row.attname === 'lock_anchor',
         grantable: false,
       });
+    }
     console.info(
       JSON.stringify({
         scope: 'S2_RUNTIME_INVENTORY',
-        tables: 8,
+        tables: 12,
+        signupTables: 8,
         columns: inventory.length,
         namespaceWrite: false,
         mutationGrant: 'claims.lock_anchor only',

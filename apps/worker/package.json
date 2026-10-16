@@ -4,9 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@authcore/crypto": "workspace:*",
+    "@authcore/db": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1"
   }
 }
