@@ -39,7 +39,7 @@ describe('S2 append-only migration lineage', () => {
       JSON.parse(await readFile(new URL('../drizzle/' + file, import.meta.url), 'utf8'));
     const journal = await read('meta/_journal.json');
     expect(journal.entries.map((entry: { idx: number }) => entry.idx)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7, 8,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
     ]);
     expect(journal.entries[4].tag).toBe('0004_signup_namespace_and_terminal_events');
     const old = await read('meta/0003_snapshot.json');
@@ -83,5 +83,11 @@ describe('S2 append-only migration lineage', () => {
       expect(comparison, table).toEqual(definition);
     }
     expect(Object.keys(resend.tables)).toHaveLength(14);
+    expect(journal.entries[9].tag).toBe('0009_password_recovery');
+    const recovery = await read('meta/0009_snapshot.json');
+    expect(recovery.prevId).toBe(resend.id);
+    for (const [table, definition] of Object.entries(resend.tables))
+      expect(recovery.tables[table], table).toEqual(definition);
+    expect(Object.keys(recovery.tables)).toHaveLength(19);
   });
 });

@@ -9,6 +9,7 @@ export {
   type ClaimedEmailDelivery,
 } from './repositories/email-delivery.repository.js';
 export { EmailVerificationRepository } from './repositories/email-verification.repository.js';
+export { PasswordRecoveryRepository } from './repositories/password-recovery.repository.js';
 export { checkDatabaseConnection } from './health.js';
 export { VerificationEventRepository } from './repositories/verification-event.repository.js';
 export { verificationEvents, type VerificationEvent } from './schema/verification-events.js';
