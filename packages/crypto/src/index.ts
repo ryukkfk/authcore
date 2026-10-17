@@ -1,4 +1,5 @@
 export { hashPassword, verifyPassword } from './password.js';
+export { createSessionCredential, sessionCredentialDigest } from './session.js';
 export {
   createVerificationToken,
   verificationTokenDigest,

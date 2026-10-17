@@ -1,0 +1,5 @@
+\set ON_ERROR_STOP on
+BEGIN;
+SELECT set_config('authcore.auth_role', :'auth_role', true);
+\ir auth-runtime-role.sql
+COMMIT;

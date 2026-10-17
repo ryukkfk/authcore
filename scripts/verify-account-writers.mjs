@@ -19,8 +19,15 @@ async function files(folder) {
 // Review changes to this inventory as security changes. Repositories remain
 // trusted transaction primitives; this guard is not an arbitrary-code sandbox.
 const expected = {
-  updates: ['packages/db/src/repositories/email-verification.repository.ts:users'],
+  updates: [
+    'packages/db/src/repositories/email-verification.repository.ts:users',
+    ...Array(4).fill('packages/db/src/repositories/browser-session.repository.ts:browserSessions'),
+  ],
   inserts: [
+    'packages/db/src/repositories/browser-session.repository.ts:browserSessions',
+    ...Array(5).fill(
+      'packages/db/src/repositories/browser-session.repository.ts:authenticationEvents',
+    ),
     'packages/db/src/repositories/email-verification.repository.ts:accountSecurityEvents',
     'packages/db/src/repositories/password-credential.repository.ts:passwordCredentials',
     'packages/db/src/repositories/security-audit-event.repository.ts:securityAuditEvents',
@@ -31,6 +38,7 @@ const expected = {
     'packages/db/src/signup-claim-policy.ts:terminal',
   ],
   accountRepositories: [
+    'apps/api/src/authentication/browser-auth.service.ts:BrowserSessionRepository',
     'apps/api/src/identity/email-verification.service.ts:EmailVerificationRepository',
     'apps/api/src/identity/identity.module.ts:UserRepository',
     'apps/api/src/identity/signup-protocol.service.ts:PasswordCredentialRepository',
@@ -39,6 +47,7 @@ const expected = {
     'apps/api/src/identity/signup-protocol.service.ts:VerificationEventRepository',
   ],
   databaseEntrypoints: [
+    'apps/api/src/authentication/browser-auth.service.ts:createDatabaseClient',
     'apps/api/src/identity/email-verification.service.ts:createDatabaseClient',
     'apps/worker/src/index.ts:createDatabaseClient',
     'apps/api/src/database/database.service.ts:createDatabaseClient',
@@ -93,7 +102,7 @@ for (const area of ['apps', 'packages', 'scripts']) {
             }
             if (
               name.startsWith('apps/') &&
-              /^(?:UserRepository|PasswordCredentialRepository|SecurityAuditEventRepository|VerificationEventRepository|EmailVerificationRepository)$/.test(
+              /^(?:UserRepository|PasswordCredentialRepository|SecurityAuditEventRepository|VerificationEventRepository|EmailVerificationRepository|BrowserSessionRepository)$/.test(
                 symbol,
               )
             ) {
@@ -121,7 +130,9 @@ for (const area of ['apps', 'packages', 'scripts']) {
         if (
           target === 'users' ||
           target === 'passwordCredentials' ||
-          target === 'securityAuditEvents'
+          target === 'securityAuditEvents' ||
+          target === 'browserSessions' ||
+          target === 'authenticationEvents'
         )
           actual.updates.push(name + ':' + target);
       }

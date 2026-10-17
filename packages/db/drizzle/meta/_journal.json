@@ -50,6 +50,13 @@
       "when": 1792158487617,
       "tag": "0006_email_delivery_and_verification",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792160477100,
+      "tag": "0007_cloudy_iron_patriot",
+      "breakpoints": true
     }
   ]
 }
