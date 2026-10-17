@@ -1,5 +1,11 @@
 # Security requirement traceability
 
+Recovery persistence follow-on: [Password Recovery](Password%20Recovery.md)
+adds purpose-separated proof/encryption helpers, version-bound immutable intent,
+transactional pending jobs and restricted requester grants. Crypto and real SQL
+regressions cover this internal boundary. SR-019/020 remain incomplete: no token
+issuance/consumption, password mutation or reset HTTP/browser flow is enabled yet.
+
 M2 verification-resend follow-on: [Registration and Verification Policy](Registration%20and%20Verification%20Policy.md)
 adds account-state policy, immutable correlated resend intent, database cooldown/
 rolling cap, dedicated HMAC-bound Redis limits and UI. Current focused PostgreSQL

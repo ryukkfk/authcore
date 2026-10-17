@@ -1,6 +1,14 @@
 export { hashPassword, verifyPassword } from './password.js';
 export { createSessionCredential, sessionCredentialDigest } from './session.js';
 export {
+  createRecoveryCredential,
+  recoveryCredentialDigest,
+  sealRecoveryDeliveryPayload,
+  openRecoveryDeliveryPayload,
+  recoveryPasswordBinding,
+  recoveryEmailBinding,
+} from './recovery.js';
+export {
   createVerificationToken,
   verificationTokenDigest,
   sealDeliveryPayload,

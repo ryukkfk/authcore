@@ -1,5 +1,19 @@
 # AuthCore Development Status
 
+Active M2 recovery persistence candidate (2026-10-17), based on Draft #29 head
+`80e3f86783766daaa68a1099a4daf29688130184`: additive recovery schema,
+credential/email version binding, transactional request plus pending delivery,
+database cooldown/cap and a separately restricted requester principal. This is
+an internal foundation; no reset HTTP endpoint, worker or UI is enabled by this
+change. [Password Recovery](Password%20Recovery.md) records implementation,
+regression assertions and remaining RECOVERY-001/002/003 acceptance criteria.
+
+Draft #29 Verify39034147540 succeeded at merge
+`c53b0739a884cc0f52e99be17367b7dc883b044a`: 791 distinct Vitest passes,
+zero failures/uncovered identities, plus three Chromium browser passes with no
+skips/flaky and one startup-cancellation pass. The earlier M2 paragraphs below
+describe its pre-CI checkpoint. Recovery requires its own final-candidate checks.
+
 M2 verification follow-on candidate (2026-10-17), based on verified Draft #28
 head `34c8682d028294beed5fe133ec26e02cc1846205`: bounded resend through the existing
 worker, correlated append-only intent/audit, database cooldown/rolling cap,

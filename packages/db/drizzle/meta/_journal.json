@@ -64,6 +64,13 @@
       "when": 1792239396486,
       "tag": "0008_verification_resend",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792244896688,
+      "tag": "0009_password_recovery",
+      "breakpoints": true
     }
   ]
 }

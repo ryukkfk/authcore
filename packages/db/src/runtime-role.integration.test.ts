@@ -244,7 +244,7 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     ).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('inventories all eight signup relations and denies access to six other subsystem relations', async () => {
+  it('inventories all eight signup relations and denies access to eleven other subsystem relations', async () => {
     await provision();
     const inventory = (
       await owner.query(
@@ -252,7 +252,7 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
         [roleName],
       )
     ).rows;
-    expect(new Set(inventory.map((row) => row.relname)).size).toBe(14);
+    expect(new Set(inventory.map((row) => row.relname)).size).toBe(19);
     const emailTables = [
       'email_deliveries',
       'email_verification_tokens',
@@ -260,6 +260,11 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
       'account_security_events',
       'browser_sessions',
       'authentication_events',
+      'password_recovery_requests',
+      'password_recovery_deliveries',
+      'password_recovery_tokens',
+      'password_recovery_attempts',
+      'password_recovery_audit',
     ];
     for (const row of inventory) {
       const signup = !emailTables.includes(row.relname);
@@ -273,7 +278,7 @@ describe.skipIf(!connectionString)('Signup runtime database privileges', () => {
     console.info(
       JSON.stringify({
         scope: 'S2_RUNTIME_INVENTORY',
-        tables: 14,
+        tables: 19,
         signupTables: 8,
         columns: inventory.length,
         namespaceWrite: false,
