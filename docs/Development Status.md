@@ -2,11 +2,31 @@
 
 Current unmerged product stack (2026-10-17): Phase B remediation #21; isolated
 baseline #23; verification outbox #24; worker/token consumption #25; verification
-HTTP #26. PR #26 Verify38914248053 reconciled 728 distinct passing tests, zero
-failures/uncovered identities. Browser login/session development is described in
-[Browser Authentication](Browser%20Authentication.md). These are dependency-ordered
-Draft candidates, not merged-main or release approval. A functioning local browser
-demo, recovery, MFA, organizations/RBAC and advanced IAM remain incomplete.
+HTTP #26; browser sessions #27; local application/demo candidate based on
+`1e5d8c01cfd82d3cd12f05f89d531172ba894f33`. PR #27 Verify38997445955 reconciled
+769 distinct passing tests, zero failures/uncovered identities. These are
+dependency-ordered Draft candidates, not merged-main or release approval.
+
+**LOCAL DEMO READY — development only.** Real Edge browser acceptance passed both
+tests with zero skips: secure signup, captured email, verification, generic
+wrong/unverified denial, login/dashboard/profile, cookie/storage boundaries,
+ordinary full-service restart persistence, device revocation, logout and raw
+credential replay rejection. The maximum signup-admissible Unicode password is
+covered end to end. Desktop page errors and CSP violations were zero; the second
+test covers mobile forms and keyboard skip navigation. Literal setup/start/stop
+commands, repeated provisioning and readiness checks were exercised. No production
+services/data or external mail were used. See [Local Demo](Local%20Demo.md).
+
+The current local regression passed lint/build/typecheck, workspace tests, real
+PostgreSQL/Redis/HTTP tests and driver/artifact/account-writer guards. Hosted-only
+guarded skips remain explicitly separate; the new candidate requires its own
+exact-head/PR CI before review acceptance. Browser counts are separate from the
+deduplicated Vitest count, and earlier PR evidence is not a rerun of new code.
+
+Resend/recovery/MFA, organizations/RBAC, full audit visibility, advanced IAM and
+production operations remain incomplete. [Security Test Matrix](Security%20Test%20Matrix.md)
+maps all 50 requirements to current evidence and gaps. See
+[Browser Authentication](Browser%20Authentication.md) for session limitations.
 
 Pending Phase B stack (2026-10-15): A1 PR #14, S1 #13, S2 #15, S3 #16,
 S4 #18 and S5 #19 are development candidates. S6 hardening and review mapping:

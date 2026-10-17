@@ -294,6 +294,19 @@ describe.skipIf(!source || !redisSource)(
       await owner.query('UPDATE users SET disabled_at=clock_timestamp()');
       expect((await get('me', disabled)).status).toBe(401);
     });
+    it('verifies maximum signup-admissible Unicode proof through real Argon2 and session persistence', async () => {
+      const unicode = '\u{1f510}\ufe0f'.repeat(128);
+      await owner.query('UPDATE password_credentials SET password_hash=$1 WHERE user_id=$2', [
+        await hashPassword(unicode),
+        userId,
+      ]);
+      const reply = await post('login', { email, password: unicode });
+      expect(reply.status).toBe(200);
+      const cookie = reply.headers.get('set-cookie')?.split(';')[0];
+      if (!cookie) throw new Error('Expected the admitted Unicode session');
+      expect((await get('me', cookie)).status).toBe(200);
+      expect((await owner.query('SELECT id FROM browser_sessions')).rows).toHaveLength(1);
+    });
     it('rejects missing or forged CSRF proof without consuming the real session', async () => {
       const cookie = await login();
       expect((await post('logout', {}, cookie, { origin: 'https://example.invalid' })).status).toBe(

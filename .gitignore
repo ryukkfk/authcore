@@ -27,6 +27,7 @@ coverage/
 /phase-b-test-identities.json
 /phase-b-merge-candidate.json
 /phase-b-validation-summary.json
+/browser-validation-summary.json
 
 *.log
 

@@ -9,6 +9,12 @@ Current implementation progress and verification evidence: [Development Status](
 The roadmap describes full ticket acceptance scope; implemented primitives do not
 by themselves complete an entire registration or security milestone.
 
+2026-10-17 development checkpoint: the isolated local application has passed real
+browser signup/mail/verification/login/dashboard/restart/revocation/logout
+acceptance. See [Local Demo](Local%20Demo.md). AUTH-001/VERIFY/SESSION retain
+remaining policy criteria; V1 recovery, MFA, organizations/RBAC and advanced IAM
+are not complete. The unmerged stack still requires qualifying human approval.
+
 This roadmap defines the recommended implementation sequence for AuthCore.
 
 The project should progress in small, reviewable increments.

@@ -1,5 +1,16 @@
 # AuthCore Architecture
 
+Local application candidate (2026-10-17): the React/Vite frontend proxies `/api`
+to the Nest API; signup uses the sole attested T1/T2/T3 protocol. Its committed
+verification intent feeds an independent restricted worker and local mailbox.
+Separate restricted verifier and authentication capabilities consume email proof
+and manage hash-only browser sessions. See [Local Demo](Local%20Demo.md) and
+[Browser Authentication](Browser%20Authentication.md). Dedicated persistent
+loopback Compose services, explicit provisioning and owned IPC shutdown support
+the real browser demo. The normal API entry remains default-disabled for signup;
+the demo entry is explicitly development-only. No production activation or
+integration of the pending stack is implied by this newer candidate checkpoint.
+
 Stacked Phase B candidate (2026-10-15): see [Phase B Implementation](Phase%20B%20Implementation.md)
 for implemented A1/S1–S6 architecture and review/activation gates. The checkpoint
 below describes historical merged-main, not the pending candidate. Signup remains off.
