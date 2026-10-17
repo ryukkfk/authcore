@@ -1,5 +1,10 @@
 export { createDatabaseClient, type DatabaseClient, type DatabaseClientOptions } from './client.js';
 export {
+  BrowserSessionRepository,
+  type PasswordSnapshot,
+  type SessionAccount,
+} from './repositories/browser-session.repository.js';
+export {
   EmailDeliveryRepository,
   type ClaimedEmailDelivery,
 } from './repositories/email-delivery.repository.js';

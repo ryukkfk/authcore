@@ -1,5 +1,13 @@
 # AuthCore Development Status
 
+Current unmerged product stack (2026-10-17): Phase B remediation #21; isolated
+baseline #23; verification outbox #24; worker/token consumption #25; verification
+HTTP #26. PR #26 Verify38914248053 reconciled 728 distinct passing tests, zero
+failures/uncovered identities. Browser login/session development is described in
+[Browser Authentication](Browser%20Authentication.md). These are dependency-ordered
+Draft candidates, not merged-main or release approval. A functioning local browser
+demo, recovery, MFA, organizations/RBAC and advanced IAM remain incomplete.
+
 Pending Phase B stack (2026-10-15): A1 PR #14, S1 #13, S2 #15, S3 #16,
 S4 #18 and S5 #19 are development candidates. S6 hardening and review mapping:
 [Phase B Implementation](Phase%20B%20Implementation.md). This does not change the

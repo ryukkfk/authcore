@@ -16,6 +16,7 @@ on:
       - feat/authcore-full-product
       - feat/authcore-verification-worker
       - feat/authcore-verification-http
+      - feat/authcore-browser-sessions
   pull_request:
     types: [opened, synchronize, reopened, edited, ready_for_review]
     branches:
@@ -32,6 +33,7 @@ on:
       - feat/authcore-full-product
       - feat/authcore-verification-outbox
       - feat/authcore-verification-worker
+      - feat/authcore-verification-http
 permissions:
   contents: read
   pull-requests: read
@@ -68,6 +70,13 @@ jobs:
 
       mailpit:
         image: axllent/mailpit:v1.31.6
+        env:
+          MP_DISABLE_VERSION_CHECK: 'true'
+        options: >-
+          --health-cmd "/mailpit readyz"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 10
         ports:
           - 127.0.0.1:8025:8025
 
@@ -300,9 +309,9 @@ jobs:
             const result = JSON.parse(readFileSync("apps/api/s5-http-results.json", "utf8"));
             const tests = result.testResults.flatMap(file => file.assertionResults);
             assert.equal(result.success, true);
-            assert.equal(tests.length, 59);
+            assert.equal(tests.length, 66);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S5_S6_REAL_HTTP total=59 passed=59 skipped=0");
+            console.log("S5_S6_AUTH_REAL_HTTP total=66 passed=66 skipped=0");
           '
 
       - name: Phase B remediation real PostgreSQL clock authority

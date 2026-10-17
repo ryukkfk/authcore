@@ -48,7 +48,9 @@ services:
       redis:
         condition: service_healthy
       mailpit:
-        condition: service_started
+        condition: service_healthy
   mailpit:
     image: axllent/mailpit:v1.31.6
+    environment:
+      MP_DISABLE_VERSION_CHECK: 'true'
     network_mode: service:postgres

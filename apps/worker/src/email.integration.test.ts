@@ -10,10 +10,11 @@ describe.skipIf(!origin)('Actual local mailbox capture', () => {
   it('captures a labeled verification email with an HTTP-safe fragment link', async () => {
     const endpoint = origin!;
     let ready = false;
-    for (let attempt = 0; attempt < 50; attempt++) {
+    const readinessDeadline = performance.now() + 3000;
+    while (performance.now() < readinessDeadline) {
       try {
-        const response = await fetch(endpoint + '/api/v1/info', {
-          signal: AbortSignal.timeout(1000),
+        const response = await fetch(endpoint + '/readyz', {
+          signal: AbortSignal.timeout(500),
         });
         await response.body?.cancel();
         if (response.ok) {
@@ -45,5 +46,5 @@ describe.skipIf(!origin)('Actual local mailbox capture', () => {
     expect(message.Subject).toBe('[LOCAL DEMO ONLY] Verify your AuthCore email');
     expect(message.Text.includes('http://127.0.0.1:3000/verify#token=' + token)).toBe(true);
     expect(message.To.some((value) => value.Address === recipient)).toBe(true);
-  }, 10000);
+  }, 15000);
 });

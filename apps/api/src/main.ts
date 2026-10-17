@@ -12,6 +12,7 @@ import { AppModule } from './app.module.js';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter.js';
 import { configureSignupHttp, SignupHttpAdapter } from './identity/signup-http.js';
 import { configureEmailVerificationHttp } from './identity/email-verification.http.js';
+import { configureBrowserAuthHttp } from './authentication/browser-http.js';
 
 loadEnvFile(resolve(process.cwd(), '../../.env'));
 
@@ -21,6 +22,7 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, new SignupHttpAdapter(), { bodyParser: false });
   configureSignupHttp(app);
   configureEmailVerificationHttp(app);
+  configureBrowserAuthHttp(app);
 
   app.setGlobalPrefix('api/v1');
   app.enableShutdownHooks();
