@@ -55,6 +55,7 @@ recorded in the development status; service readiness alone is not acceptance.
 - Durable transactional verification intent, restricted worker/verifier roles,
   retry/backoff/dead-letter auditing and local email capture.
 - High-entropy, hashed, single-use email verification credentials with database expiry.
+- Bounded verification resend through the same durable worker, with database cooldown/daily cap and generic responses.
 - Verified-account password login through the central Argon2id implementation.
 - Hash-only opaque browser sessions, HttpOnly cookies, CSRF defense, expiry,
   rotation, device revocation and logout-all/others.
@@ -62,7 +63,7 @@ recorded in the development status; service readiness alone is not acceptance.
 - Real PostgreSQL, Redis, HTTP, concurrency/crash and browser test infrastructure.
 
 These capabilities do not complete every acceptance criterion of AUTH-001,
-VERIFY or SESSION tickets. Resend policy, account recovery, MFA, organizations,
+VERIFY or SESSION tickets. Account recovery, MFA, organizations,
 memberships, RBAC/tenant isolation, authorized audit viewer and full V1 hardening
 remain roadmap work. OAuth/OIDC, passkeys and risk controls follow the V1 gates.
 See [Roadmap](docs/Roadmap.md) and [Development Status](docs/Development%20Status.md).

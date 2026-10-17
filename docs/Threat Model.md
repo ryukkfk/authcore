@@ -1,5 +1,14 @@
 # AuthCore Threat Model
 
+M2 resend adds an unauthenticated email-trigger surface. Dedicated HMAC-bound
+IP/address/global Redis limits precede database work; account-row serialization
+and database cooldown/rolling cap independently bound issuance. Unknown, verified,
+disabled and policy-limited addresses share generic acceptance. Existing proofs
+remain valid so a forged request cannot invalidate an owner's link. Requests that
+cause issuance append correlated intent/audit in the same transaction. See
+[Registration and Verification Policy](Registration%20and%20Verification%20Policy.md)
+for exact limits, error contract and remaining timing/retention boundaries.
+
 Local browser candidate (2026-10-17) adds the following scoped boundaries. These
 supplement, rather than supersede, the Phase B transaction/driver threat evidence.
 

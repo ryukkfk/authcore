@@ -57,6 +57,13 @@
       "when": 1792160477100,
       "tag": "0007_cloudy_iron_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792239396486,
+      "tag": "0008_verification_resend",
+      "breakpoints": true
     }
   ]
 }

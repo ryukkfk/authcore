@@ -39,7 +39,7 @@ describe('S2 append-only migration lineage', () => {
       JSON.parse(await readFile(new URL('../drizzle/' + file, import.meta.url), 'utf8'));
     const journal = await read('meta/_journal.json');
     expect(journal.entries.map((entry: { idx: number }) => entry.idx)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7,
+      0, 1, 2, 3, 4, 5, 6, 7, 8,
     ]);
     expect(journal.entries[4].tag).toBe('0004_signup_namespace_and_terminal_events');
     const old = await read('meta/0003_snapshot.json');
@@ -71,5 +71,17 @@ describe('S2 append-only migration lineage', () => {
     for (const [table, definition] of Object.entries(delivery.tables))
       expect(sessions.tables[table], table).toEqual(definition);
     expect(Object.keys(sessions.tables)).toHaveLength(14);
+    expect(journal.entries[8].tag).toBe('0008_verification_resend');
+    const resend = await read('meta/0008_snapshot.json');
+    expect(resend.prevId).toBe(sessions.id);
+    for (const [table, definition] of Object.entries(sessions.tables)) {
+      const comparison = structuredClone(resend.tables[table]);
+      if (table === 'public.verification_events') {
+        delete comparison.columns.request_id;
+        delete comparison.indexes.verification_events_user_created_idx;
+      }
+      expect(comparison, table).toEqual(definition);
+    }
+    expect(Object.keys(resend.tables)).toHaveLength(14);
   });
 });

@@ -49,7 +49,11 @@ Passwords, session credentials and verification proof never enter browser storag
 The verification fragment is removed before the client submits proof in JSON.
 Refreshing before consuming the proof requires reopening the original message.
 
-Current limits: no resend/recovery/MFA/organization workflows yet. A consumed or
+Use Need a verification email? on sign-in to request another link. Requests have
+a one-minute cooldown and a five-resends rolling-day issuance cap; acceptance
+does not disclose account eligibility. See [Registration and Verification Policy](Registration%20and%20Verification%20Policy.md).
+
+Current limits: no recovery/MFA/organization workflows yet. A consumed or
 expired verification link fails safely; it does not create a session.
 The mail-capture UI is trusted local development infrastructure. Cookies do not
 isolate ports; the development session path is /api/v1/auth to avoid attaching it

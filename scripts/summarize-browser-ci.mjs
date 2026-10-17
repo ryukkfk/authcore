@@ -11,7 +11,7 @@ export function summarizeBrowserReport(report) {
     Array.isArray(report.errors) && report.errors.length === 0,
     'Browser runner reported an infrastructure error',
   );
-  assert.equal(report.stats.expected, 2);
+  assert.equal(report.stats.expected, 3);
   assert.equal(report.stats.unexpected, 0);
   assert.equal(report.stats.flaky, 0);
   assert.equal(report.stats.skipped, 0);
@@ -49,7 +49,7 @@ export function summarizeBrowserReport(report) {
     for (const child of suite.suites ?? []) visit(child);
   }
   for (const suite of report.suites) visit(suite);
-  assert.equal(count, 2);
+  assert.equal(count, 3);
   return {
     uniqueBrowserTests: count,
     passed: count,

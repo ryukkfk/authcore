@@ -17,7 +17,7 @@ export class EmailVerificationService implements OnApplicationShutdown {
   private readonly logger = new Logger(EmailVerificationService.name);
   private loggingFaults = 0;
 
-  async verify(token: string, requestId: string): Promise<boolean> {
+  private repository(): EmailVerificationRepository {
     const connectionString = process.env.VERIFICATION_DATABASE_URL;
     if (!connectionString || this.stopped)
       throw new ServiceUnavailableException('Verification temporarily unavailable');
@@ -38,7 +38,13 @@ export class EmailVerificationService implements OnApplicationShutdown {
         }
       });
     }
-    return new EmailVerificationRepository(this.database.pool).consume(token, requestId);
+    return new EmailVerificationRepository(this.database.pool);
+  }
+  async verify(token: string, requestId: string): Promise<boolean> {
+    return this.repository().consume(token, requestId);
+  }
+  async resend(emailNormalized: string, requestId: string): Promise<void> {
+    await this.repository().requestResend(emailNormalized, requestId);
   }
   async onApplicationShutdown() {
     this.stopped = true;

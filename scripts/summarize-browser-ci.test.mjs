@@ -5,10 +5,10 @@ import { summarizeBrowserReport } from './summarize-browser-ci.mjs';
 function fixture() {
   return {
     errors: [],
-    stats: { expected: 2, unexpected: 0, flaky: 0, skipped: 0 },
+    stats: { expected: 3, unexpected: 0, flaky: 0, skipped: 0 },
     suites: [
       {
-        specs: ['full flow', 'mobile keyboard'].map((title) => ({
+        specs: ['full flow', 'mobile keyboard', 'bounded resend'].map((title) => ({
           file: 'authentication.pw.ts',
           title,
           ok: true,
@@ -25,10 +25,10 @@ function fixture() {
     ],
   };
 }
-test('browser evidence publishes only two unique opaque passed identities', () => {
+test('browser evidence publishes only three unique opaque passed identities', () => {
   const result = summarizeBrowserReport(fixture());
-  assert.equal(result.uniqueBrowserTests, 2);
-  assert.equal(result.identities.length, 2);
+  assert.equal(result.uniqueBrowserTests, 3);
+  assert.equal(result.identities.length, 3);
   assert(result.identities.every((id) => /^[0-9a-f]{64}$/.test(id)));
   assert(!JSON.stringify(result).includes('full flow'));
 });

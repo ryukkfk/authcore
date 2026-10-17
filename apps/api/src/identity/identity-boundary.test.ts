@@ -51,12 +51,20 @@ describe('PB-001 production account writer boundary', () => {
     }
   });
 
-  it('reconciles all production persistence writers and privileged consumers across applications and packages', () => {
-    const root = fileURLToPath(new URL('../../../../', import.meta.url));
-    const output = execFileSync(process.execPath, ['scripts/verify-account-writers.mjs'], {
-      cwd: root,
-      encoding: 'utf8',
-    });
-    expect(output).toContain('ACCOUNT_WRITERS PASS');
-  });
+  it(
+    'reconciles all production persistence writers and privileged consumers across applications and packages',
+    { timeout: 20000 },
+    () => {
+      const root = fileURLToPath(new URL('../../../../', import.meta.url));
+      const output = execFileSync(process.execPath, ['scripts/verify-account-writers.mjs'], {
+        cwd: root,
+        encoding: 'utf8',
+        // This starts a TypeScript AST scan in another Node process. Cold Windows
+        // startup can exceed Vitest's 5s default; bound the actual child as well.
+        // No inventory assertion or application security deadline is changed.
+        timeout: 15000,
+      });
+      expect(output).toContain('ACCOUNT_WRITERS PASS');
+    },
+  );
 });

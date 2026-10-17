@@ -46,8 +46,8 @@ BEGIN
     EXECUTE format('GRANT SELECT(event_id,expires_at) ON public.email_verification_tokens TO %I',role_name);
     EXECUTE format('GRANT UPDATE(status,attempts,next_attempt_at,owner,locked_until,envelope,updated_at) ON public.email_deliveries TO %I',role_name);
   ELSE
-    EXECUTE format('GRANT SELECT(id,email_verified_at,disabled_at),UPDATE(email_verified_at,updated_at) ON public.users TO %I',role_name);
-    EXECUTE format('GRANT SELECT(id,user_id) ON public.verification_events TO %I',role_name);
+    EXECUTE format('GRANT SELECT(id,email_normalized,email_verified_at,disabled_at),UPDATE(email_verified_at,updated_at) ON public.users TO %I',role_name);
+    EXECUTE format('GRANT SELECT(id,user_id,reason,created_at),INSERT(user_id,reason,request_id,created_at) ON public.verification_events TO %I',role_name);
     EXECUTE format('GRANT SELECT(event_id,digest,expires_at,consumed_at),UPDATE(consumed_at) ON public.email_verification_tokens TO %I',role_name);
     EXECUTE format('GRANT INSERT ON public.account_security_events TO %I',role_name);
   END IF;
@@ -65,10 +65,11 @@ BEGIN
         insertable := relation.relname IN ('email_deliveries','email_verification_tokens','email_delivery_attempts');
         updatable := relation.relname='email_deliveries' AND col.attname IN ('status','attempts','next_attempt_at','owner','locked_until','envelope','updated_at');
       ELSE
-        readable := (relation.relname='users' AND col.attname IN ('id','email_verified_at','disabled_at'))
-          OR (relation.relname='verification_events' AND col.attname IN ('id','user_id'))
+        readable := (relation.relname='users' AND col.attname IN ('id','email_normalized','email_verified_at','disabled_at'))
+          OR (relation.relname='verification_events' AND col.attname IN ('id','user_id','reason','created_at'))
           OR (relation.relname='email_verification_tokens' AND col.attname IN ('event_id','digest','expires_at','consumed_at'));
-        insertable := relation.relname='account_security_events';
+        insertable := relation.relname='account_security_events'
+          OR (relation.relname='verification_events' AND col.attname IN ('user_id','reason','request_id','created_at'));
         updatable := (relation.relname='users' AND col.attname IN ('email_verified_at','updated_at'))
           OR (relation.relname='email_verification_tokens' AND col.attname='consumed_at');
       END IF;

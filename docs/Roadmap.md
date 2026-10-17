@@ -15,6 +15,11 @@ acceptance. See [Local Demo](Local%20Demo.md). AUTH-001/VERIFY/SESSION retain
 remaining policy criteria; V1 recovery, MFA, organizations/RBAC and advanced IAM
 are not complete. The unmerged stack still requires qualifying human approval.
 
+The next bounded verification candidate adds an account-state/resend policy,
+database-backed cooldown/rolling issuance cap, correlated durable intent and a
+working resend UI. See [Registration and Verification Policy](Registration%20and%20Verification%20Policy.md).
+Its validation does not complete V1 or approve external email/public signup.
+
 This roadmap defines the recommended implementation sequence for AuthCore.
 
 The project should progress in small, reviewable increments.

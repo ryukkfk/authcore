@@ -1,0 +1,2 @@
+ALTER TABLE "verification_events" ADD COLUMN "request_id" uuid;--> statement-breakpoint
+CREATE INDEX "verification_events_user_created_idx" ON "verification_events" USING btree ("user_id","created_at");

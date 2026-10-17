@@ -14,6 +14,8 @@ export const verificationEvents = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     eventType: text('event_type').default('identity.email_verification_requested').notNull(),
     reason: text('reason').$type<'signup' | 'resend'>().default('signup').notNull(),
+    // Nullable for historical/signup intent; explicit resend issuance supplies it.
+    requestId: uuid('request_id'),
     createdAt: timestamp('created_at', { withTimezone: true, precision: 3, mode: 'date' })
       .defaultNow()
       .notNull(),
@@ -28,6 +30,7 @@ export const verificationEvents = pgTable(
       .on(table.userId)
       .where(sql`${table.reason} = 'signup'`),
     index('verification_events_created_idx').on(table.createdAt, table.id),
+    index('verification_events_user_created_idx').on(table.userId, table.createdAt),
   ],
 );
 

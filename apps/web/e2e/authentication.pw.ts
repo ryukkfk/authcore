@@ -303,3 +303,74 @@ test('mobile public forms and keyboard skip navigation remain accessible', async
   await page.goto('/verify');
   await expect(page.getByRole('alert')).toContainText('verification link is missing');
 });
+
+test('verification resend respects real cooldown and delivers a usable replacement', async ({
+  page,
+}) => {
+  const email = 'resend-' + randomUUID() + '@example.invalid';
+  await page.goto('/register');
+  await page.getByLabel('Email address').fill(email);
+  await fillProof(page, password);
+  const registered = page.waitForResponse((reply) => reply.url().endsWith('/api/v1/auth/signup'));
+  await page.getByRole('button', { name: 'Create account', exact: false }).click();
+  expect((await registered).status()).toBe(202);
+  const messages = async () => {
+    const reply = await fetch(
+      config.mailboxOrigin + '/api/v1/search?query=' + encodeURIComponent('to:' + email),
+      { signal: AbortSignal.timeout(3000) },
+    );
+    return (await reply.json()).messages as { ID: string }[];
+  };
+  await expect.poll(async () => (await messages()).length, { timeout: 20000 }).toBe(1);
+  const submitResend = async () => {
+    await page.goto('/resend-verification');
+    await page.getByLabel('Email address').fill(email);
+    const reply = page.waitForResponse((value) =>
+      value.url().endsWith('/api/v1/auth/resend-verification'),
+    );
+    await page.getByRole('button', { name: 'Send verification email', exact: true }).click();
+    expect((await reply).status()).toBe(202);
+    await expect(page.getByRole('status')).toContainText('If this address is eligible');
+  };
+  await submitResend();
+  expect((await messages()).length).toBe(1);
+  // Exercise actual database-clock expiry. Never clear Redis, move database time
+  // or add a backdoor to make the browser pass its one-minute issuance cooldown.
+  await page.waitForTimeout(61000);
+  await submitResend();
+  await expect.poll(async () => (await messages()).length, { timeout: 20000 }).toBe(2);
+  const latest = (await messages())[0];
+  if (!latest) throw new Error('Expected the captured replacement message.');
+  const reply = await fetch(config.mailboxOrigin + '/api/v1/message/' + latest.ID, {
+    signal: AbortSignal.timeout(3000),
+  });
+  const proof = /http:\/\/127\.0\.0\.1:\d+\/verify#token=[A-Za-z0-9_-]{43}/.exec(
+    (await reply.json()).Text ?? '',
+  );
+  if (!proof || !proof[0].startsWith(config.webOrigin + '/verify#token='))
+    throw new Error('Expected local replacement proof (credential omitted).');
+  try {
+    await page.goto(proof[0]);
+  } catch {
+    throw new Error('Replacement proof navigation failed (credential omitted).');
+  }
+  await page.getByRole('button', { name: 'Verify email', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Email confirmed.' })).toBeVisible();
+  expect(await signIn(page, email)).toBe(200);
+  await expect(page.getByRole('heading', { name: 'Your account, at a glance.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page).toHaveURL(config.webOrigin + '/login');
+  for (const status of [202, 202, 429]) {
+    const response = await page.request.post(
+      config.webOrigin + '/api/v1/auth/resend-verification',
+      {
+        data: { email },
+        headers: { origin: config.webOrigin },
+      },
+    );
+    expect(response.status()).toBe(status);
+    if (status === 202) expect(await response.json()).toEqual({ status: 'accepted' });
+    expect(response.headers()['set-cookie']).toBeUndefined();
+  }
+  expect((await messages()).length).toBe(2);
+});
