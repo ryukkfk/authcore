@@ -1,5 +1,22 @@
 # AuthCore Development Status
 
+M2 verification follow-on candidate (2026-10-17), based on verified Draft #28
+head `34c8682d028294beed5fe133ec26e02cc1846205`: bounded resend through the existing
+worker, correlated append-only intent/audit, database cooldown/rolling cap,
+dedicated HMAC-bound Redis limits and a real resend page. Focused PostgreSQL18
+and HTTP21 tests passed; all three real Edge browser tests passed, including an
+actual one-minute cooldown, replacement delivery/verification/login and real
+Redis account-limit denial. Genuine local Linux regression passed lint/typecheck,
+workspace tests, PostgreSQL140, Redis28, local HTTP19 and driver/artifact/writer
+guards; hosted-only skips are separate. New exact-head/PR CI remains required.
+See [Registration and Verification Policy](Registration%20and%20Verification%20Policy.md).
+
+Draft #28 PR Verify39031619153 succeeded at merge
+`84f6d579f4ca24eff5711e25389af83a60dc8f91`:777 distinct Vitest passes,0 failures,
+0 uncovered identities; Chromium browser2/2 with zero skips/flaky and startup
+cancellation1/1. Later description-update Verify39032016298 also succeeded.
+This is actual M1 candidate evidence, separate from M2 validation below.
+
 Current unmerged product stack (2026-10-17): Phase B remediation #21; isolated
 baseline #23; verification outbox #24; worker/token consumption #25; verification
 HTTP #26; browser sessions #27; local application/demo candidate based on
@@ -23,7 +40,7 @@ guarded skips remain explicitly separate; the new candidate requires its own
 exact-head/PR CI before review acceptance. Browser counts are separate from the
 deduplicated Vitest count, and earlier PR evidence is not a rerun of new code.
 
-Resend/recovery/MFA, organizations/RBAC, full audit visibility, advanced IAM and
+Recovery/MFA, organizations/RBAC, full audit visibility, advanced IAM and
 production operations remain incomplete. [Security Test Matrix](Security%20Test%20Matrix.md)
 maps all 50 requirements to current evidence and gaps. See
 [Browser Authentication](Browser%20Authentication.md) for session limitations.

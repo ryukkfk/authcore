@@ -132,6 +132,7 @@ function setup(
       userId: claim.id,
       reason: 'signup',
       eventType: 'identity.email_verification_requested',
+      requestId: null,
       createdAt: claim.createdAt,
     });
   const accepted = vi

@@ -3,19 +3,23 @@ import { randomUUID } from 'node:crypto';
 import { json, type Request, type Response } from 'express';
 
 export const isEmailVerificationRequest = (request: Request) =>
-  request.path === '/api/v1/auth/verify-email';
+  request.path === '/api/v1/auth/verify-email' ||
+  request.path === '/api/v1/auth/resend-verification';
 const correlation = new WeakMap<Request, string>();
 export const emailVerificationRequestId = (request: Request) =>
   correlation.get(request) ?? randomUUID();
 export function configureEmailVerificationHttp(app: INestApplication) {
-  const parser = json({
-    limit: 1024,
-    inflate: false,
-    strict: true,
-    verify: (_request, _response, buffer) => {
-      new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-    },
-  });
+  const parserFor = (limit: number) =>
+    json({
+      limit,
+      inflate: false,
+      strict: true,
+      verify: (_request, _response, buffer) => {
+        new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+      },
+    });
+  const proofParser = parserFor(1024),
+    resendParser = parserFor(2048);
   app.use((request: Request, response: Response, next: () => void) => {
     if (!isEmailVerificationRequest(request)) return next();
     response.setHeader('Cache-Control', 'no-store');
@@ -57,6 +61,7 @@ export function configureEmailVerificationHttp(app: INestApplication) {
       clearTimeout(timer);
     };
     response.once('close', close);
+    const parser = request.path.endsWith('/resend-verification') ? resendParser : proofParser;
     parser(request, response, (error?: unknown) => {
       if (finished) return;
       close();

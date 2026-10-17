@@ -150,6 +150,8 @@ export function App({ verificationToken }: { verificationToken: string | undefin
           <CredentialForm register={path === '/register'} />
         ) : path === '/verify' ? (
           <Verification token={verificationToken} />
+        ) : path === '/resend-verification' ? (
+          <ResendVerification />
         ) : path === '/' ? (
           <Landing signedIn={!!account} />
         ) : (
@@ -299,6 +301,9 @@ function CredentialForm({ register }: { register: boolean }) {
               message and confirm your email to continue.
             </Notice>
             <MailboxLink />
+            <a className="text-link block" href="/resend-verification">
+              Request another verification email
+            </a>
             <a className="text-link block" href="/login">
               Continue to sign in →
             </a>
@@ -358,6 +363,11 @@ function CredentialForm({ register }: { register: boolean }) {
             </a>
           </p>
         )}
+        {!register && (
+          <a className="text-link block" href="/resend-verification">
+            Need a verification email?
+          </a>
+        )}
       </section>
     </div>
   );
@@ -407,6 +417,11 @@ function Verification({ token }: { token: string | undefined }) {
               and can be used once.
             </p>
             {error && <Notice error>{error}</Notice>}
+            {error && (
+              <a className="text-link block" href="/resend-verification">
+                Request a new verification email
+              </a>
+            )}
             <button className="button full" disabled={busy} onClick={() => void verify()}>
               {busy ? 'Verifying…' : 'Verify email'}
             </button>
@@ -418,11 +433,83 @@ function Verification({ token }: { token: string | undefined }) {
               mailbox.
             </Notice>
             <MailboxLink />
+            <a className="text-link block" href="/resend-verification">
+              Request a new verification email
+            </a>
             <a className="text-link block" href="/login">
               Return to sign in
             </a>
           </>
         )}
+      </section>
+    </div>
+  );
+}
+function ResendVerification() {
+  const [email, setEmail] = useState(''),
+    [busy, setBusy] = useState(false),
+    [accepted, setAccepted] = useState(false),
+    [error, setError] = useState('');
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await request('resend-verification', { email });
+      if (
+        !result ||
+        typeof result !== 'object' ||
+        !('status' in result) ||
+        result.status !== 'accepted'
+      )
+        throw new ApiFailure(503);
+      setAccepted(true);
+    } catch (error) {
+      setError(failureMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="auth-layout centered">
+      <section className="auth-card">
+        <p className="eyebrow">EMAIL VERIFICATION</p>
+        <h1>Request a verification email</h1>
+        <p>
+          Wait at least a minute between requests. Existing links remain usable until they expire.
+        </p>
+        {accepted ? (
+          <>
+            <Notice>
+              If this address is eligible, a verification email will arrive. Requests are limited to
+              protect your account.
+            </Notice>
+            <MailboxLink />
+          </>
+        ) : (
+          <form onSubmit={(event) => void submit(event)} aria-busy={busy}>
+            <label htmlFor="resend-email">Email address</label>
+            <input
+              id="resend-email"
+              name="email"
+              type="email"
+              autoComplete="username"
+              maxLength={254}
+              required
+              disabled={busy}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            {error && <Notice error>{error}</Notice>}
+            <button className="button full" type="submit" disabled={busy}>
+              {busy ? 'Please wait…' : 'Send verification email'}
+            </button>
+          </form>
+        )}
+        <a className="text-link block" href="/login">
+          Return to sign in
+        </a>
       </section>
     </div>
   );

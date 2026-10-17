@@ -1,0 +1,1247 @@
+{
+  "id": "d6fbdfda-b913-4cf5-8d1c-6c9086509604",
+  "prevId": "97600ced-29cd-425c-a2ba-b9f7d361bf8e",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.authentication_events": {
+      "name": "authentication_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "authentication_events_user_idx": {
+          "name": "authentication_events_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "authentication_events_user_id_users_id_fk": {
+          "name": "authentication_events_user_id_users_id_fk",
+          "tableFrom": "authentication_events",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "authentication_events_session_id_browser_sessions_id_fk": {
+          "name": "authentication_events_session_id_browser_sessions_id_fk",
+          "tableFrom": "authentication_events",
+          "tableTo": "browser_sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "authentication_events_type_check": {
+          "name": "authentication_events_type_check",
+          "value": "\"authentication_events\".\"event_type\" IN ('auth.login_succeeded','auth.login_failed','auth.logout','auth.session_revoked','auth.sessions_revoked','auth.session_rotated')"
+        },
+        "authentication_events_subject_check": {
+          "name": "authentication_events_subject_check",
+          "value": "\"authentication_events\".\"event_type\" = 'auth.login_failed' OR \"authentication_events\".\"user_id\" IS NOT NULL"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.browser_sessions": {
+      "name": "browser_sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_digest": {
+          "name": "token_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "device_label": {
+          "name": "device_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "browser_sessions_user_idx": {
+          "name": "browser_sessions_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "browser_sessions_user_id_users_id_fk": {
+          "name": "browser_sessions_user_id_users_id_fk",
+          "tableFrom": "browser_sessions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "browser_sessions_token_digest_unique": {
+          "name": "browser_sessions_token_digest_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token_digest"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "browser_sessions_digest_check": {
+          "name": "browser_sessions_digest_check",
+          "value": "\"browser_sessions\".\"token_digest\" ~ '^[0-9a-f]{64}$'"
+        },
+        "browser_sessions_expiry_check": {
+          "name": "browser_sessions_expiry_check",
+          "value": "isfinite(\"browser_sessions\".\"expires_at\") AND \"browser_sessions\".\"expires_at\" > \"browser_sessions\".\"created_at\""
+        },
+        "browser_sessions_device_check": {
+          "name": "browser_sessions_device_check",
+          "value": "\"browser_sessions\".\"device_label\" IN ('Chromium','Firefox','Safari','Other')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.account_security_events": {
+      "name": "account_security_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "account_security_events_user_idx": {
+          "name": "account_security_events_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "account_security_events_user_id_users_id_fk": {
+          "name": "account_security_events_user_id_users_id_fk",
+          "tableFrom": "account_security_events",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "account_security_events_type_check": {
+          "name": "account_security_events_type_check",
+          "value": "\"account_security_events\".\"event_type\" = 'identity.email_verified'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.email_deliveries": {
+      "name": "email_deliveries",
+      "schema": "",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "owner": {
+          "name": "owner",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "locked_until": {
+          "name": "locked_until",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "envelope": {
+          "name": "envelope",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "email_deliveries_ready_idx": {
+          "name": "email_deliveries_ready_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "email_deliveries_event_id_verification_events_id_fk": {
+          "name": "email_deliveries_event_id_verification_events_id_fk",
+          "tableFrom": "email_deliveries",
+          "tableTo": "verification_events",
+          "columnsFrom": [
+            "event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "email_deliveries_status_check": {
+          "name": "email_deliveries_status_check",
+          "value": "\"email_deliveries\".\"status\" IN ('pending','processing','sent','dead','cancelled')"
+        },
+        "email_deliveries_attempts_check": {
+          "name": "email_deliveries_attempts_check",
+          "value": "\"email_deliveries\".\"attempts\" BETWEEN 0 AND 5"
+        },
+        "email_deliveries_lease_check": {
+          "name": "email_deliveries_lease_check",
+          "value": "(\"email_deliveries\".\"status\" = 'processing' AND \"email_deliveries\".\"owner\" IS NOT NULL AND \"email_deliveries\".\"locked_until\" IS NOT NULL) OR (\"email_deliveries\".\"status\" <> 'processing' AND \"email_deliveries\".\"owner\" IS NULL AND \"email_deliveries\".\"locked_until\" IS NULL)"
+        },
+        "email_deliveries_terminal_check": {
+          "name": "email_deliveries_terminal_check",
+          "value": "\"email_deliveries\".\"status\" NOT IN ('sent','dead','cancelled') OR \"email_deliveries\".\"envelope\" IS NULL"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.email_delivery_attempts": {
+      "name": "email_delivery_attempts",
+      "schema": "",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phase": {
+          "name": "phase",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "email_delivery_attempts_event_id_email_deliveries_event_id_fk": {
+          "name": "email_delivery_attempts_event_id_email_deliveries_event_id_fk",
+          "tableFrom": "email_delivery_attempts",
+          "tableTo": "email_deliveries",
+          "columnsFrom": [
+            "event_id"
+          ],
+          "columnsTo": [
+            "event_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "email_delivery_attempts_event_id_attempt_phase_pk": {
+          "name": "email_delivery_attempts_event_id_attempt_phase_pk",
+          "columns": [
+            "event_id",
+            "attempt",
+            "phase"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "email_delivery_attempts_number_check": {
+          "name": "email_delivery_attempts_number_check",
+          "value": "\"email_delivery_attempts\".\"attempt\" BETWEEN 1 AND 5"
+        },
+        "email_delivery_attempts_phase_check": {
+          "name": "email_delivery_attempts_phase_check",
+          "value": "\"email_delivery_attempts\".\"phase\" IN ('claimed','sent','retry','dead','cancelled')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.email_verification_tokens": {
+      "name": "email_verification_tokens",
+      "schema": "",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "digest": {
+          "name": "digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "email_verification_tokens_event_id_verification_events_id_fk": {
+          "name": "email_verification_tokens_event_id_verification_events_id_fk",
+          "tableFrom": "email_verification_tokens",
+          "tableTo": "verification_events",
+          "columnsFrom": [
+            "event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "email_verification_tokens_digest_unique": {
+          "name": "email_verification_tokens_digest_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "digest"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "email_verification_tokens_digest_check": {
+          "name": "email_verification_tokens_digest_check",
+          "value": "\"email_verification_tokens\".\"digest\" ~ '^[0-9a-f]{64}$'"
+        },
+        "email_verification_tokens_expiry_check": {
+          "name": "email_verification_tokens_expiry_check",
+          "value": "isfinite(\"email_verification_tokens\".\"expires_at\") AND \"email_verification_tokens\".\"expires_at\" > \"email_verification_tokens\".\"created_at\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.password_credentials": {
+      "name": "password_credentials",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "password_credentials_user_id_users_id_fk": {
+          "name": "password_credentials_user_id_users_id_fk",
+          "tableFrom": "password_credentials",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.security_audit_events": {
+      "name": "security_audit_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "security_audit_events_user_id_users_id_fk": {
+          "name": "security_audit_events_user_id_users_id_fk",
+          "tableFrom": "security_audit_events",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "security_audit_events_type_user_unique": {
+          "name": "security_audit_events_type_user_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "event_type",
+            "user_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "security_audit_events_type_check": {
+          "name": "security_audit_events_type_check",
+          "value": "\"security_audit_events\".\"event_type\" = 'identity.user_created'"
+        },
+        "security_audit_events_payload_check": {
+          "name": "security_audit_events_payload_check",
+          "value": "\"security_audit_events\".\"payload\" = '{}'::jsonb"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signup_idempotency_claims": {
+      "name": "signup_idempotency_claims",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "key_version": {
+          "name": "key_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hmac_key_version": {
+          "name": "hmac_key_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key_digest": {
+          "name": "key_digest",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload_version": {
+          "name": "payload_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload_digest": {
+          "name": "payload_digest",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lock_anchor": {
+          "name": "lock_anchor",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {
+        "signup_claims_hmac_version_idx": {
+          "name": "signup_claims_hmac_version_idx",
+          "columns": [
+            {
+              "expression": "hmac_key_version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "signup_idempotency_claims_key_unique": {
+          "name": "signup_idempotency_claims_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "key_version",
+            "hmac_key_version",
+            "key_digest"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "signup_idempotency_claims_versions_check": {
+          "name": "signup_idempotency_claims_versions_check",
+          "value": "\"signup_idempotency_claims\".\"key_version\" = 1 AND \"signup_idempotency_claims\".\"payload_version\" = 1 AND \"signup_idempotency_claims\".\"hmac_key_version\" > 0"
+        },
+        "signup_idempotency_claims_digests_check": {
+          "name": "signup_idempotency_claims_digests_check",
+          "value": "\"signup_idempotency_claims\".\"key_digest\" ~ '^[0-9a-f]{64}$' AND \"signup_idempotency_claims\".\"payload_digest\" ~ '^[0-9a-f]{64}$'"
+        },
+        "signup_idempotency_claims_expiry_check": {
+          "name": "signup_idempotency_claims_expiry_check",
+          "value": "isfinite(\"signup_idempotency_claims\".\"created_at\") AND isfinite(\"signup_idempotency_claims\".\"expires_at\") AND \"signup_idempotency_claims\".\"expires_at\" > \"signup_idempotency_claims\".\"created_at\""
+        },
+        "signup_idempotency_claims_lock_anchor_check": {
+          "name": "signup_idempotency_claims_lock_anchor_check",
+          "value": "\"signup_idempotency_claims\".\"lock_anchor\" = false"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signup_idempotency_namespace": {
+      "name": "signup_idempotency_namespace",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "hmac_key_version": {
+          "name": "hmac_key_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attestation_key_digest": {
+          "name": "attestation_key_digest",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attestation_payload_digest": {
+          "name": "attestation_payload_digest",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signup_namespace_singleton_check": {
+          "name": "signup_namespace_singleton_check",
+          "value": "\"signup_idempotency_namespace\".\"id\" = 1"
+        },
+        "signup_namespace_version_check": {
+          "name": "signup_namespace_version_check",
+          "value": "\"signup_idempotency_namespace\".\"hmac_key_version\" > 0"
+        },
+        "signup_namespace_digests_check": {
+          "name": "signup_namespace_digests_check",
+          "value": "\"signup_idempotency_namespace\".\"attestation_key_digest\" ~ '^[0-9a-f]{64}$' AND \"signup_idempotency_namespace\".\"attestation_payload_digest\" ~ '^[0-9a-f]{64}$'"
+        },
+        "signup_namespace_created_check": {
+          "name": "signup_namespace_created_check",
+          "value": "isfinite(\"signup_idempotency_namespace\".\"created_at\")"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signup_idempotency_results": {
+      "name": "signup_idempotency_results",
+      "schema": "",
+      "columns": {
+        "claim_id": {
+          "name": "claim_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "result_version": {
+          "name": "result_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status_code": {
+          "name": "status_code",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response_body": {
+          "name": "response_body",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "signup_idempotency_results_claim_fk": {
+          "name": "signup_idempotency_results_claim_fk",
+          "tableFrom": "signup_idempotency_results",
+          "tableTo": "signup_idempotency_claims",
+          "columnsFrom": [
+            "claim_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signup_idempotency_results_response_check": {
+          "name": "signup_idempotency_results_response_check",
+          "value": "\"signup_idempotency_results\".\"result_version\" = 1 AND \"signup_idempotency_results\".\"status_code\" = 202 AND \"signup_idempotency_results\".\"response_body\" = '{\"status\":\"accepted\"}'::jsonb"
+        },
+        "signup_idempotency_results_created_at_check": {
+          "name": "signup_idempotency_results_created_at_check",
+          "value": "isfinite(\"signup_idempotency_results\".\"created_at\")"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signup_idempotency_terminal_events": {
+      "name": "signup_idempotency_terminal_events",
+      "schema": "",
+      "columns": {
+        "claim_id": {
+          "name": "claim_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "policy_version": {
+          "name": "policy_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "clock_timestamp()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "signup_terminal_events_claim_fk": {
+          "name": "signup_terminal_events_claim_fk",
+          "tableFrom": "signup_idempotency_terminal_events",
+          "tableTo": "signup_idempotency_claims",
+          "columnsFrom": [
+            "claim_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signup_terminal_events_policy_check": {
+          "name": "signup_terminal_events_policy_check",
+          "value": "\"signup_idempotency_terminal_events\".\"policy_version\" = 1 AND \"signup_idempotency_terminal_events\".\"event_type\" = 'signup.expired'"
+        },
+        "signup_terminal_events_time_check": {
+          "name": "signup_terminal_events_time_check",
+          "value": "isfinite(\"signup_idempotency_terminal_events\".\"observed_at\") AND isfinite(\"signup_idempotency_terminal_events\".\"recorded_at\")"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(254)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_normalized": {
+          "name": "email_normalized",
+          "type": "varchar(254)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_verified_at": {
+          "name": "email_verified_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "disabled_at": {
+          "name": "disabled_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "users_email_normalized_unique": {
+          "name": "users_email_normalized_unique",
+          "columns": [
+            {
+              "expression": "email_normalized",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.verification_events": {
+      "name": "verification_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'identity.email_verification_requested'"
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'signup'"
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "verification_events_initial_user_unique": {
+          "name": "verification_events_initial_user_unique",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"verification_events\".\"reason\" = 'signup'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "verification_events_created_idx": {
+          "name": "verification_events_created_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "verification_events_user_created_idx": {
+          "name": "verification_events_user_created_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "verification_events_user_id_users_id_fk": {
+          "name": "verification_events_user_id_users_id_fk",
+          "tableFrom": "verification_events",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "verification_events_type_check": {
+          "name": "verification_events_type_check",
+          "value": "\"verification_events\".\"event_type\" = 'identity.email_verification_requested'"
+        },
+        "verification_events_reason_check": {
+          "name": "verification_events_reason_check",
+          "value": "\"verification_events\".\"reason\" IN ('signup', 'resend')"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

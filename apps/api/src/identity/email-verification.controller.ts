@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { isEmail, maxLength } from 'class-validator';
 import {
   Body,
   BadRequestException,
@@ -15,6 +16,7 @@ import { verificationTokenDigest } from '@authcore/crypto';
 import { RedisService } from '../redis/redis.service.js';
 import { EmailVerificationService } from './email-verification.service.js';
 import { emailVerificationRequestId } from './email-verification.http.js';
+import { normalizeEmail } from './email.js';
 
 const consume = `
 for i=1,#KEYS do
@@ -32,6 +34,59 @@ export class EmailVerificationController {
     @Inject(EmailVerificationService) private readonly verification: EmailVerificationService,
     @Inject(RedisService) private readonly redis: RedisService,
   ) {}
+
+  @Post('resend-verification')
+  @HttpCode(202)
+  async resend(@Body() input: unknown, @Req() request: Request): Promise<{ status: 'accepted' }> {
+    // Public request, not a session-authenticated operation. Eligibility is never
+    // returned; the database outbox records a request only when policy permits.
+    const origin = request.headers.origin;
+    if (origin && origin !== process.env.WEB_ORIGIN)
+      throw new HttpException('Request origin rejected', 403);
+    if (
+      !input ||
+      typeof input !== 'object' ||
+      Array.isArray(input) ||
+      Object.keys(input).length !== 1 ||
+      !('email' in input) ||
+      typeof input.email !== 'string' ||
+      !maxLength(input.email.trim(), 254) ||
+      !isEmail(input.email.trim())
+    )
+      throw new BadRequestException('Invalid verification request');
+    const key = process.env.AUTH_RATE_HMAC_KEY,
+      ip = request.socket.remoteAddress;
+    if (!key || !/^[0-9a-f]{64}$/.test(key) || !ip)
+      throw new ServiceUnavailableException('Verification temporarily unavailable');
+    const normalized = normalizeEmail(input.email);
+    const fingerprint = (category: string, value: string) =>
+      createHmac('sha256', Buffer.from(key, 'hex'))
+        .update(JSON.stringify(['verification.resend.v1', category, value]))
+        .digest('hex');
+    let allowed: unknown;
+    try {
+      const client = await this.redis.getClient();
+      allowed = await client.eval(consume, {
+        keys: [
+          'authcore:{verify-resend}:ip:' + fingerprint('ip', ip),
+          'authcore:{verify-resend}:account:' + fingerprint('account', normalized),
+          'authcore:{verify-resend}:global',
+        ],
+        arguments: ['10', '3', '100', '60000'],
+      });
+    } catch {
+      throw new ServiceUnavailableException('Verification temporarily unavailable');
+    }
+    if (allowed === 0) throw new HttpException('Too many requests', 429);
+    if (allowed !== 1)
+      throw new ServiceUnavailableException('Verification temporarily unavailable');
+    try {
+      await this.verification.resend(normalized, emailVerificationRequestId(request));
+    } catch {
+      throw new ServiceUnavailableException('Verification temporarily unavailable');
+    }
+    return { status: 'accepted' };
+  }
 
   @Post('verify-email')
   @HttpCode(200)

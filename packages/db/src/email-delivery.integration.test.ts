@@ -146,6 +146,142 @@ describe.skipIf(!source)('Email worker and verification real PostgreSQL lifecycl
         .sort(),
     ).toEqual(['claimed', 'sent']);
   });
+
+  it('queues one correlated resend under concurrent requests while preserving initial intent', async () => {
+    await owner.query(
+      "UPDATE verification_events SET created_at=clock_timestamp()-interval '2 minutes'",
+    );
+    await Promise.all(
+      Array.from({ length: 6 }, () =>
+        verification.requestResend('fixture@example.invalid', randomUUID()),
+      ),
+    );
+    const events = (
+      await owner.query('SELECT reason,request_id FROM verification_events ORDER BY created_at')
+    ).rows;
+    expect(events).toHaveLength(2);
+    expect(events[0].reason).toBe('signup');
+    expect(events[1].reason).toBe('resend');
+    expect(events[1].request_id).toMatch(/^[a-f0-9-]{36}$/);
+  });
+
+  it('silently denies unknown verified disabled and initial-cooldown resend requests', async () => {
+    await verification.requestResend('unknown@example.invalid', randomUUID());
+    await verification.requestResend('fixture@example.invalid', randomUUID());
+    await owner.query(
+      "UPDATE verification_events SET created_at=clock_timestamp()-interval '2 minutes'",
+    );
+    await owner.query('UPDATE users SET email_verified_at=clock_timestamp() WHERE id=$1', [userId]);
+    await verification.requestResend('fixture@example.invalid', randomUUID());
+    await owner.query(
+      'UPDATE users SET email_verified_at=NULL,disabled_at=clock_timestamp() WHERE id=$1',
+      [userId],
+    );
+    await verification.requestResend('fixture@example.invalid', randomUUID());
+    expect((await owner.query('SELECT reason FROM verification_events')).rows).toEqual([
+      { reason: 'signup' },
+    ]);
+  });
+
+  it('enforces the five-resends rolling database-day cap and permits expiry without Redis truth', async () => {
+    for (let attempt = 0; attempt < 7; attempt++) {
+      await owner.query(
+        "UPDATE verification_events SET created_at=clock_timestamp()-interval '2 minutes'",
+      );
+      await verification.requestResend('fixture@example.invalid', randomUUID());
+    }
+    expect(
+      (await owner.query("SELECT id FROM verification_events WHERE reason='resend'")).rows,
+    ).toHaveLength(5);
+    await owner.query(
+      "UPDATE verification_events SET created_at=clock_timestamp()-interval '25 hours'",
+    );
+    await verification.requestResend('fixture@example.invalid', randomUUID());
+    expect(
+      (await owner.query("SELECT id FROM verification_events WHERE reason='resend'")).rows,
+    ).toHaveLength(6);
+  });
+
+  it('fails conservatively on future event time and preserves intent/audit atomicity on failure', async () => {
+    await owner.query(
+      "UPDATE verification_events SET created_at=clock_timestamp()+interval '1 hour'",
+    );
+    await verification.requestResend('fixture@example.invalid', randomUUID());
+    expect((await owner.query('SELECT id FROM verification_events')).rows).toHaveLength(1);
+    await owner.query(
+      "UPDATE verification_events SET created_at=clock_timestamp()-interval '2 minutes'",
+    );
+    await owner.query(
+      "ALTER TABLE verification_events ADD CONSTRAINT fixture_deny_resend CHECK(reason <> 'resend')",
+    );
+    try {
+      await expect(
+        verification.requestResend('fixture@example.invalid', randomUUID()),
+      ).rejects.toMatchObject({ code: '23514' });
+    } finally {
+      await owner.query('ALTER TABLE verification_events DROP CONSTRAINT fixture_deny_resend');
+    }
+    expect((await owner.query('SELECT id FROM verification_events')).rows).toHaveLength(1);
+  });
+
+  it('rereads post-lock account state and denies a resend queued before verification', async () => {
+    await owner.query(
+      "UPDATE verification_events SET created_at=clock_timestamp()-interval '2 minutes'",
+    );
+    const blocker = await owner.connect();
+    let pending: Promise<void> | undefined;
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [userId]);
+      pending = verification.requestResend('fixture@example.invalid', randomUUID());
+      await expect
+        .poll(
+          async () =>
+            Number(
+              (
+                await owner.query(
+                  "SELECT count(*) AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE email_normalized=%'",
+                )
+              ).rows[0].n,
+            ),
+          { timeout: 750, interval: 10 },
+        )
+        .toBe(1);
+      await blocker.query('UPDATE users SET email_verified_at=clock_timestamp() WHERE id=$1', [
+        userId,
+      ]);
+      await blocker.query('COMMIT');
+      await pending;
+      expect((await owner.query('SELECT id FROM verification_events')).rows).toHaveLength(1);
+    } finally {
+      await blocker.query('ROLLBACK');
+      blocker.release();
+      await pending;
+    }
+  });
+
+  it('leaves original proof usable and cancels queued resend after verification', async () => {
+    const initial = await claimed(),
+      message = payload(initial);
+    await repository.complete(initial, true);
+    await owner.query(
+      "UPDATE verification_events SET created_at=clock_timestamp()-interval '2 minutes'",
+    );
+    const correlation = randomUUID();
+    await verification.requestResend('fixture@example.invalid', correlation);
+    expect(await verification.consume(message.token, randomUUID())).toBe(true);
+    expect(await repository.claim(key)).toBeUndefined();
+    expect(
+      (
+        await owner.query(
+          "SELECT status FROM email_deliveries d JOIN verification_events e ON e.id=d.event_id WHERE e.reason='resend'",
+        )
+      ).rows,
+    ).toEqual([{ status: 'cancelled' }]);
+    expect(
+      (await owner.query("SELECT request_id FROM verification_events WHERE reason='resend'")).rows,
+    ).toEqual([{ request_id: correlation }]);
+  });
   it('allows one live claim across independent database checkouts', async () => {
     const results = await Promise.all(Array.from({ length: 4 }, () => repository.claim(key)));
     expect(results.filter(Boolean)).toHaveLength(1);

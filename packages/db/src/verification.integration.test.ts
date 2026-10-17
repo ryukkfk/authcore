@@ -97,6 +97,7 @@ describe.skipIf(!source)('Durable verification PostgreSQL boundary', () => {
         'event_type',
         'id',
         'reason',
+        'request_id',
         'user_id',
       ]);
       expect(events[0].event_type).toBe('identity.email_verification_requested');
