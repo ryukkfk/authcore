@@ -37,15 +37,21 @@ async function main() {
   const shutdown = new AbortController();
   process.once('SIGINT', () => shutdown.abort());
   process.once('SIGTERM', () => shutdown.abort());
+  process.on('message', (message) => {
+    if (message === 'authcore:shutdown') shutdown.abort();
+  });
+  process.send?.('authcore:ready');
   try {
     await new VerificationWorker(new EmailDeliveryRepository(database.pool), transport, [
       { id: 'local-v1', key: Buffer.from(value.deliveryKey, 'hex') },
     ]).run(shutdown.signal);
   } finally {
     await database.pool.end();
+    process.disconnect?.();
   }
 }
 void main().catch(() => {
   process.stderr.write('{"event":"worker.startup_failed"}\n');
   process.exitCode = 1;
+  process.disconnect?.();
 });

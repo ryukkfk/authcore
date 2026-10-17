@@ -11,7 +11,7 @@ import {
   BadRequestException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { isEmail, isUUID } from 'class-validator';
+import { isEmail, isUUID, maxLength } from 'class-validator';
 import type { Request, Response } from 'express';
 import { BrowserAuthService } from './browser-auth.service.js';
 import {
@@ -60,11 +60,11 @@ export class BrowserAuthController {
       !validObject(body) ||
       Object.keys(body).sort().join(',') !== 'email,password' ||
       typeof body.email !== 'string' ||
-      body.email.trim().length > 254 ||
+      !maxLength(body.email.trim(), 254) ||
       !isEmail(body.email.trim()) ||
       typeof body.password !== 'string' ||
       body.password.length < 1 ||
-      body.password.length > 128
+      !maxLength(body.password, 128)
     )
       throw new BadRequestException('Invalid authentication request');
     const context = browserRequestContext(request);

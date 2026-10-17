@@ -1,5 +1,22 @@
 # AuthCore Threat Model
 
+Local browser candidate (2026-10-17) adds the following scoped boundaries. These
+supplement, rather than supersede, the Phase B transaction/driver threat evidence.
+
+| Threat                                     | Current mitigation and evidence                                                                                                                                              | Remaining boundary                                                     |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Forged browser authentication              | Actual server Argon2 proof and verified/enabled account state; hash-only revocable sessions; real SQL/Redis/HTTP/browser tests                                               | MFA/reauthentication and account recovery pending                      |
+| CSRF/session theft/replay                  | Exact Origin/custom-header policy, HttpOnly/SameSite cookies, bounded bodies, rotation/DB expiry/revocation; browser logout replay returns 401                               | Production TLS/proxy review and XSS assessment remain necessary        |
+| Mail verification proof disclosure         | URL fragment removed before client requests/rendering; no analytics/storage; explicit consumption; hashed verifier proof; encrypted durable retry payload                    | Local mailbox and private files are trusted development infrastructure |
+| Cookie sharing across local ports          | Development Path `/api/v1/auth` excludes ordinary Mailpit `/api/v1` requests; browser checks cookie path and storage                                                         | Ports do not isolate cookies; do not colocate untrusted local services |
+| XSS/CSP relaxation during restart          | React escaping, no raw HTML sink, strict script CSP; demo HMR/WebSocket disabled; browser observes zero CSP errors                                                           | Production hosting headers require separate validation                 |
+| Accidental production/default signup       | Explicit development flags/entry, literal loopback targets and disposable database/role names, independently provisioned HMAC metadata/immutable anchor                      | Public signup and live credentials/roles remain separately gated       |
+| Lost worker event or startup/shutdown race | Durable transactional outbox; independent worker retries/leases; supervisor retains process ownership through IPC readiness and actual drain; restart and startup-stop tests | Single local PostgreSQL does not establish primary/failover durability |
+
+See [Security Test Matrix](Security%20Test%20Matrix.md) for requirement-specific
+coverage and gaps. No local test establishes external certification or production
+readiness; tenant isolation remains unimplemented until organization/RBAC work.
+
 Stacked Phase B candidate (2026-10-15): [implementation threat/failure evidence](Phase%20B%20Failure%20Matrix.md)
 maps T01–T17 and F01–F28, distinguishing real/synthetic tests from operational gates.
 The historical baseline below is not independent approval of this candidate.

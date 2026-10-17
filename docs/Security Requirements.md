@@ -1,5 +1,9 @@
 # AuthCore Security Requirements
 
+Current development traceability (2026-10-17): [Security Test Matrix](Security%20Test%20Matrix.md)
+maps SR-001–SR-050 to implemented slices, tests and unresolved requirements.
+Local browser acceptance does not establish full requirement or release completion.
+
 Stacked Phase B candidate (2026-10-15): [implementation and decisions](Phase%20B%20Implementation.md)
 and [failure/threat evidence](Phase%20B%20Failure%20Matrix.md) document candidate controls
 and remaining independent/operational gates. AUTH-001 is still incomplete and

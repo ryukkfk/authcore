@@ -17,6 +17,7 @@ on:
       - feat/authcore-verification-worker
       - feat/authcore-verification-http
       - feat/authcore-browser-sessions
+      - feat/authcore-local-demo
   pull_request:
     types: [opened, synchronize, reopened, edited, ready_for_review]
     branches:
@@ -34,6 +35,7 @@ on:
       - feat/authcore-verification-outbox
       - feat/authcore-verification-worker
       - feat/authcore-verification-http
+      - feat/authcore-browser-sessions
 permissions:
   contents: read
   pull-requests: read
@@ -133,7 +135,7 @@ jobs:
         run: |
           node scripts/verify-phase-b-artifact.mjs
           node scripts/verify-account-writers.mjs
-          node --test scripts/summarize-phase-b-ci.test.mjs
+          node --test scripts/summarize-phase-b-ci.test.mjs scripts/summarize-browser-ci.test.mjs
 
       - name: S6 disposable PostgreSQL log privacy
         run: node scripts/configure-disposable-ci-postgres.mjs
@@ -309,9 +311,9 @@ jobs:
             const result = JSON.parse(readFileSync("apps/api/s5-http-results.json", "utf8"));
             const tests = result.testResults.flatMap(file => file.assertionResults);
             assert.equal(result.success, true);
-            assert.equal(tests.length, 66);
+            assert.equal(tests.length, 67);
             assert(tests.every(test => test.status === "passed"));
-            console.log("S5_S6_AUTH_REAL_HTTP total=66 passed=66 skipped=0");
+            console.log("S5_S6_AUTH_REAL_HTTP total=67 passed=67 skipped=0");
           '
 
       - name: Phase B remediation real PostgreSQL clock authority
@@ -336,6 +338,26 @@ jobs:
             console.log("PB_REAL_POSTGRES total=10 passed=10 skipped=0");
           '
 
+      - name: Install official browser for local demo acceptance
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Provision disposable local demo and test the actual browser flow
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: .local-demo/browser-results.json
+        run: |
+          node scripts/local-demo.mjs setup
+          node --test scripts/local-demo.lifecycle.test.mjs
+          node scripts/local-demo.mjs start > .local-demo/ci-supervisor.log 2>&1 &
+          pnpm test:e2e --reporter=list,json
+          node scripts/summarize-browser-ci.mjs
+
+      - name: Stop owned local demo after browser checks
+        if: always()
+        run: |
+          if test -f .local-demo/processes.json; then
+            node scripts/local-demo.mjs stop
+          fi
+
       - name: Recheck effective CI candidate after testing
         env:
           CI_READ_TOKEN: ${{ github.token }}
@@ -354,5 +376,6 @@ jobs:
             phase-b-validation-summary.json
             phase-b-test-identities.json
             phase-b-merge-candidate.json
+            browser-validation-summary.json
           if-no-files-found: warn
           retention-days: 30

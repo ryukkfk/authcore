@@ -69,7 +69,7 @@ clients must deliberately provide the same write contract. CORS remains restrict
 to the configured web origin. Bodies are bounded to 4 KiB with strict UTF-8, no
 compression, a five-second upload bound and no query credentials.
 
-Development cookies: authcore_session, HttpOnly, SameSite=Lax, Path=/api/v1.
+Development cookies: authcore_session, HttpOnly, SameSite=Lax, Path=/api/v1/auth. The narrower development path avoids attaching the session cookie to the local test mailbox's /api/v1 endpoints on another port. Cookie scope does not isolate ports; local services remain trusted development infrastructure.
 Production cookies: __Host-authcore_session, HttpOnly, Secure, SameSite=Lax,
 Path=/, no Domain. Production WEB_ORIGIN must be HTTPS. Tokens are never returned
 in JSON or stored in localStorage. These controls do not substitute for CSP/XSS

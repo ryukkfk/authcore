@@ -25,7 +25,7 @@ export function sessionCookiePolicy(production: boolean): { name: string; option
       httpOnly: true,
       secure: production,
       sameSite: 'lax',
-      path: production ? '/' : '/api/v1',
+      path: production ? '/' : '/api/v1/auth',
       maxAge: 12 * 60 * 60 * 1000,
     },
   };

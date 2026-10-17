@@ -13,13 +13,21 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:ci": "pnpm lint && pnpm typecheck && pnpm test",
-    "test:local": "docker compose -p authcore-full-product-test -f infrastructure/compose.test.yml run --build --rm runner"
+    "test:local": "docker compose -p authcore-full-product-test -f infrastructure/compose.test.yml run --build --rm runner",
+    "dev:setup": "pnpm install --frozen-lockfile && pnpm build && node scripts/local-demo.mjs setup",
+    "dev:start": "pnpm build && node scripts/local-demo.mjs start",
+    "dev:stop": "node scripts/local-demo.mjs stop",
+    "dev:open": "node scripts/open-local-demo.mjs",
+    "demo:check": "node scripts/local-demo.mjs check",
+    "test:e2e": "playwright test",
+    "test:all": "pnpm test:local && pnpm test:e2e"
   },
   "engines": {
     "node": ">=24"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.64.1",
     "eslint": "^10.11.0",
     "prettier": "^3.9.9",
     "typescript": "^6.0.0",

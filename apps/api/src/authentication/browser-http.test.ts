@@ -4,6 +4,9 @@ import { NestFactory } from '@nestjs/core';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { createSessionCredential } from '@authcore/crypto';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { SignupDto } from '../identity/dto/signup.dto.js';
 import { BrowserAuthController } from './browser-auth.controller.js';
 import { BrowserAuthService } from './browser-auth.service.js';
 import { configureBrowserAuthHttp } from './browser-http.js';
@@ -76,7 +79,7 @@ describe('Browser authentication real HTTP boundary with controlled domain outco
       'authcore_session=',
       'HttpOnly',
       'SameSite=Lax',
-      'Path=/api/v1',
+      'Path=/api/v1/auth;',
       'Max-Age=43200',
     ])
       expect(cookie.includes(part)).toBe(true);
@@ -97,6 +100,13 @@ describe('Browser authentication real HTTP boundary with controlled domain outco
     for (const part of ['__Host-authcore_session=', 'Secure', 'HttpOnly', 'Path=/', 'SameSite=Lax'])
       expect(cookie.includes(part)).toBe(true);
     expect(cookie.includes('Domain=')).toBe(false);
+  });
+  it('accepts the same maximum Unicode password length as signup without normalization', async () => {
+    const input = { email: account.email, password: '\u{1f510}\ufe0f'.repeat(128) };
+    expect(validateSync(plainToInstance(SignupDto, input))).toHaveLength(0);
+    const reply = await post('login', input);
+    expect(reply.status).toBe(200);
+    expect(auth.login.mock.calls[0]?.[0].password === input.password).toBe(true);
   });
   it('requires server session resolution and rejects absent, malformed or ambiguous cookies', async () => {
     expect((await fetch(base + 'me')).status).toBe(401);
@@ -146,6 +156,7 @@ describe('Browser authentication real HTTP boundary with controlled domain outco
   it.each([
     { email: 'invalid', password: 'Public fixture password' },
     { email: account.email, password: 'x'.repeat(129) },
+    { email: account.email, password: '\u{1f510}\ufe0f'.repeat(129) },
     { email: account.email, password: '' },
     { email: account.email, password: 'Public fixture password', extra: true },
   ])('rejects invalid login input %# before native/domain work', async (body) => {
@@ -192,7 +203,7 @@ describe('Browser authentication real HTTP boundary with controlled domain outco
     expect(reply.status).toBe(204);
     const cookie = reply.headers.get('set-cookie') ?? '';
     expect(cookie.includes('authcore_session=;')).toBe(true);
-    expect(cookie.includes('Path=/api/v1')).toBe(true);
+    expect(cookie.includes('Path=/api/v1/auth;')).toBe(true);
     expect((await post('sessions/revoke', { sessionId: 'forged' })).status).toBe(400);
   });
 });
